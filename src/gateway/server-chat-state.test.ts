@@ -40,4 +40,28 @@ describe("createSessionMessageSubscriberRegistry", () => {
     expect([...subscribers.get("agent:main:child")]).toEqual([]);
     expect([...subscribers.getApprovals("agent:main:child")]).toEqual([]);
   });
+
+  it("rolls a provisional subscription back to its exact prior state", () => {
+    const subscribers = createSessionMessageSubscriberRegistry();
+
+    const removeNew = subscribers.subscribe("conn-new", "agent:main:main", {
+      includeApprovals: true,
+    });
+    removeNew?.();
+    expect([...subscribers.get("agent:main:main")]).toEqual([]);
+    expect([...subscribers.getApprovals("agent:main:main")]).toEqual([]);
+
+    subscribers.subscribe("conn-plain", "agent:main:main");
+    const restorePlain = subscribers.subscribe("conn-plain", "agent:main:main", {
+      includeApprovals: true,
+    });
+    restorePlain?.();
+    expect([...subscribers.get("agent:main:main")]).toEqual(["conn-plain"]);
+    expect([...subscribers.getApprovals("agent:main:main")]).toEqual([]);
+
+    subscribers.subscribe("conn-reviewer", "agent:main:main", { includeApprovals: true });
+    const restoreReviewer = subscribers.subscribe("conn-reviewer", "agent:main:main");
+    restoreReviewer?.();
+    expect([...subscribers.getApprovals("agent:main:main")]).toEqual(["conn-reviewer"]);
+  });
 });

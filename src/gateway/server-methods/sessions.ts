@@ -963,9 +963,17 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     if (connId) {
       let approvalReplay;
       if (p.includeApprovals === true) {
+        // Subscribe before the authoritative snapshot so a transition cannot
+        // land between replay and live delivery. Clients reconcile by id.
+        const rollbackSubscription = context.subscribeSessionMessageEvents(
+          connId,
+          subscriptionKey,
+          { includeApprovals: true },
+        );
         try {
           approvalReplay = context.listSessionPendingApprovals?.(subscriptionKey, client);
         } catch (error) {
+          rollbackSubscription?.();
           context.logGateway.error(`session approval replay failed: ${String(error)}`);
           respond(
             false,
@@ -975,6 +983,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           return;
         }
         if (!approvalReplay) {
+          rollbackSubscription?.();
           respond(
             false,
             undefined,
@@ -982,11 +991,6 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           );
           return;
         }
-      }
-      if (p.includeApprovals === true) {
-        context.subscribeSessionMessageEvents(connId, subscriptionKey, {
-          includeApprovals: true,
-        });
       } else {
         context.subscribeSessionMessageEvents(connId, subscriptionKey);
       }

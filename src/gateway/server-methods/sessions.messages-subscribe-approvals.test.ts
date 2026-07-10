@@ -38,13 +38,18 @@ function createClient(params: {
 
 function createContext(params: {
   replay?: SessionApprovalReplay;
+  replayError?: Error;
   globalScope?: boolean;
   agents?: Array<{ id: string; default?: boolean }>;
 }) {
-  const subscribeSessionMessageEvents = vi.fn();
-  const listSessionPendingApprovals = vi.fn(
-    (_sessionKey: string, _client: GatewayClient | null) => params.replay,
-  );
+  const rollbackSubscription = vi.fn();
+  const subscribeSessionMessageEvents = vi.fn(() => rollbackSubscription);
+  const listSessionPendingApprovals = vi.fn(() => {
+    if (params.replayError) {
+      throw params.replayError;
+    }
+    return params.replay;
+  });
   const logError = vi.fn();
   const context = {
     getRuntimeConfig: () => ({
@@ -55,7 +60,13 @@ function createContext(params: {
     logGateway: { error: logError },
     subscribeSessionMessageEvents,
   } as unknown as GatewayRequestContext;
-  return { context, listSessionPendingApprovals, logError, subscribeSessionMessageEvents };
+  return {
+    context,
+    listSessionPendingApprovals,
+    logError,
+    rollbackSubscription,
+    subscribeSessionMessageEvents,
+  };
 }
 
 async function subscribe(params: {
@@ -104,6 +115,9 @@ describe("sessions.messages.subscribe approval opt-in", () => {
     expect(listSessionPendingApprovals).toHaveBeenCalledWith(
       "agent:work:global",
       expect.objectContaining({ connId: " conn-admin " }),
+    );
+    expect(subscribeSessionMessageEvents.mock.invocationCallOrder[0]).toBeLessThan(
+      listSessionPendingApprovals.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     expect(subscribeSessionMessageEvents).toHaveBeenCalledWith("conn-admin", "agent:work:global", {
       includeApprovals: true,
@@ -199,5 +213,42 @@ describe("sessions.messages.subscribe approval opt-in", () => {
       undefined,
     );
     expect(respond.mock.calls[0]?.[1]).not.toHaveProperty("approvalReplay");
+  });
+
+  it.each([
+    { name: "throws", replayError: new Error("database unavailable") },
+    { name: "returns no snapshot", replayError: undefined },
+  ])("restores the prior subscription when replay $name", async ({ replayError }) => {
+    const {
+      context,
+      listSessionPendingApprovals,
+      logError,
+      rollbackSubscription,
+      subscribeSessionMessageEvents,
+    } = createContext({ replayError });
+
+    const respond = await subscribe({
+      body: { key: "agent:main:child", includeApprovals: true },
+      client: createClient({ scopes: ["operator.admin"] }),
+      context,
+    });
+
+    expect(subscribeSessionMessageEvents).toHaveBeenCalledWith(
+      "conn-approval-reviewer",
+      "agent:main:child",
+      { includeApprovals: true },
+    );
+    expect(subscribeSessionMessageEvents.mock.invocationCallOrder[0]).toBeLessThan(
+      listSessionPendingApprovals.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(rollbackSubscription).toHaveBeenCalledTimes(1);
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "UNAVAILABLE" }),
+    );
+    if (replayError) {
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining("database unavailable"));
+    }
   });
 });

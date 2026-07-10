@@ -140,7 +140,7 @@ export type GatewayRequestContext = {
     connId: string,
     sessionKey: string,
     opts?: { includeApprovals?: boolean },
-  ) => void;
+  ) => (() => void) | undefined;
   unsubscribeSessionMessageEvents: (connId: string, sessionKey: string) => void;
   unsubscribeAllSessionEvents: (connId: string) => void;
   getSessionEventSubscriberConnIds: () => ReadonlySet<string>;

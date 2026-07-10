@@ -20,13 +20,28 @@ type BundledPluginTabView = {
     host: object;
     client: GatewayBrowserClient | null;
     connected: boolean;
+    embed?: {
+      embedSandboxMode: ApplicationContext<RouteId>["config"]["current"]["embedSandboxMode"];
+      allowExternalEmbedUrls: boolean;
+    };
     onRequestUpdate?: () => void;
+    // L5: custom widgets need the gateway HTTP base (iframe src) and the session
+    // key (prompt dispatch). Bundled views that don't use them ignore these.
+    basePath?: string;
+    sessionKey?: string;
   }) => unknown;
   stop: (host: object) => void;
 };
 
 // Keyed by pluginId/tabId: tab ids are only unique within their plugin.
 const BUNDLED_TAB_VIEWS: Record<string, () => Promise<BundledPluginTabView>> = {
+  "dashboard/workspaces": async () => {
+    const [view, controller] = await Promise.all([
+      import("./dashboard-view.ts"),
+      import("./dashboard-controller.ts"),
+    ]);
+    return { render: view.renderDashboard, stop: controller.stopDashboard };
+  },
   "codex-supervisor/sessions": async () => {
     const [view, controller] = await Promise.all([
       import("./codex-sessions-view.ts"),
@@ -153,11 +168,22 @@ export class PluginPage extends OpenClawLightDomContentsElement {
         return nothing;
       }
       const snapshot = context.gateway.snapshot;
+      // Config may be absent in unit harnesses; the dashboard view defaults the
+      // embed policy to strict when `embed` is omitted.
+      const config = context.config?.current;
       return this.bundledView.render({
         host: this.bundledViewHost,
         client: snapshot.client,
         connected: snapshot.connected,
+        embed: config
+          ? {
+              embedSandboxMode: config.embedSandboxMode,
+              allowExternalEmbedUrls: config.allowExternalEmbedUrls,
+            }
+          : undefined,
         onRequestUpdate: () => this.requestUpdate(),
+        basePath: context.basePath,
+        sessionKey: snapshot.sessionKey,
       });
     }
     if (info?.path) {

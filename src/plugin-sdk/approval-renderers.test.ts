@@ -59,7 +59,7 @@ describe("plugin-sdk/approval-renderers", () => {
         request: {
           title: "Sensitive action",
           description: "Needs approval",
-          allowedDecisions: ["deny"],
+          allowedDecisions: ["allow-once"],
         },
         createdAtMs: 1_000,
         expiresAtMs: 61_000,
@@ -67,16 +67,18 @@ describe("plugin-sdk/approval-renderers", () => {
       nowMs: 1_000,
     });
 
+    expect(payload.text).toContain("Reply with: /approve plugin-legacy allow-once");
+    expect(payload.text).not.toContain("allow-once|deny");
     expect(payload.presentation).toEqual({
       blocks: [
         {
           type: "buttons",
           buttons: [
             {
-              label: "Deny",
-              action: { type: "command", command: "/approve plugin-legacy deny" },
-              value: "/approve plugin-legacy deny",
-              style: "danger",
+              label: "Allow Once",
+              action: { type: "command", command: "/approve plugin-legacy allow-once" },
+              value: "/approve plugin-legacy allow-once",
+              style: "success",
             },
           ],
         },
@@ -224,9 +226,12 @@ describe("plugin-sdk/approval-renderers", () => {
           expiresAtMs: 61_000,
         },
         nowMs: 1_000,
+        allowedDecisions: ["allow-once"],
       }),
-      textExpected: (text: string) =>
-        expect(text).toContain("Reply with: /approve plugin-approval-123 allow-once|deny"),
+      textExpected: (text: string) => {
+        expect(text).toContain("Reply with: /approve plugin-approval-123 allow-once");
+        expect(text).not.toContain("allow-once|deny");
+      },
       presentationExpected: {
         blocks: [
           {

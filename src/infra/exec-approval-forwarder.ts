@@ -34,11 +34,11 @@ import {
   type ExecApprovalRequest,
   type ExecApprovalResolved,
 } from "./exec-approvals.js";
+import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "./plugin-approval-canonical-decisions.js";
 import {
   approvalDecisionLabel,
   buildPluginApprovalExpiredMessage,
   buildPluginApprovalRequestMessage,
-  resolvePluginApprovalRequestAllowedDecisions,
   type PluginApprovalRequest,
   type PluginApprovalResolved,
 } from "./plugin-approvals.js";
@@ -479,7 +479,9 @@ function buildPluginPendingPayload(params: {
         request: params.request,
         nowMs: params.nowMs,
         text: buildPluginApprovalRequestMessage(params.request, params.nowMs),
-        allowedDecisions: resolvePluginApprovalRequestAllowedDecisions(params.request.request),
+        allowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions(
+          params.request.request,
+        ),
       }),
   });
 }

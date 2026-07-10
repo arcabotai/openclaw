@@ -91,6 +91,23 @@ describe("resolveApprovalOverGateway", () => {
     });
   });
 
+  it("preserves protocol-valid boundary whitespace in canonical approval ids", async () => {
+    const approvalId = "\uFEFF";
+
+    await resolveApprovalOverGateway({
+      cfg: {} as never,
+      approvalId,
+      approvalKind: "exec",
+      decision: "deny",
+    });
+
+    expect(hoisted.clientRequest).toHaveBeenCalledWith("approval.resolve", {
+      id: approvalId,
+      kind: "exec",
+      decision: "deny",
+    });
+  });
+
   it("returns the canonical winner when another surface resolved first", async () => {
     hoisted.clientRequest.mockResolvedValueOnce({
       applied: false,
@@ -235,9 +252,7 @@ describe("resolveApprovalOverGateway", () => {
   });
 
   it.each([
-    { approvalId: " ", approvalKind: "exec", decision: "deny" },
-    { approvalId: " approval-1", approvalKind: "exec", decision: "deny" },
-    { approvalId: "approval-1\t", approvalKind: "exec", decision: "deny" },
+    { approvalId: "", approvalKind: "exec", decision: "deny" },
     { approvalId: ".", approvalKind: "exec", decision: "deny" },
     { approvalId: "..", approvalKind: "exec", decision: "deny" },
     { approvalId: "approval-\uD800", approvalKind: "exec", decision: "deny" },

@@ -5,6 +5,7 @@ import {
   buildTypedApprovalPresentation,
   type ExecApprovalReplyDecision,
 } from "../infra/exec-approval-reply.js";
+import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../infra/plugin-approval-canonical-decisions.js";
 import {
   buildPluginApprovalRequestMessage,
   buildPluginApprovalResolvedMessage,
@@ -140,9 +141,9 @@ export function buildTypedPluginApprovalPendingReplyPayload(
     approvalId: params.request.id,
     approvalSlug: params.approvalSlug ?? params.request.id.slice(0, 8),
     text: params.text ?? buildPluginApprovalRequestMessage(params.request, params.nowMs),
-    allowedDecisions:
-      params.allowedDecisions ??
-      resolvePluginApprovalRequestAllowedDecisions(params.request.request),
+    allowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions({
+      allowedDecisions: params.allowedDecisions ?? params.request.request.allowedDecisions,
+    }),
     channelData: params.channelData,
   });
 }

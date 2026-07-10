@@ -131,14 +131,10 @@ type BuildExecApprovalActionDescriptorsParams = {
   allowedDecisions?: readonly ExecApprovalReplyDecision[];
 };
 
-export function buildExecApprovalActionDescriptors(
-  params: BuildExecApprovalActionDescriptorsParams,
+function buildApprovalActionDescriptors(
+  approvalCommandId: string,
+  allowedDecisions: readonly ExecApprovalReplyDecision[],
 ): ExecApprovalActionDescriptor[] {
-  const approvalCommandId = params.approvalCommandId.trim();
-  if (!approvalCommandId) {
-    return [];
-  }
-  const allowedDecisions = resolveAllowedDecisions(params);
   const descriptors: ExecApprovalActionDescriptor[] = [];
   const buildDescriptor = (descriptor: {
     decision: ExecApprovalReplyDecision;
@@ -183,6 +179,15 @@ export function buildExecApprovalActionDescriptors(
   return descriptors;
 }
 
+export function buildExecApprovalActionDescriptors(
+  params: BuildExecApprovalActionDescriptorsParams,
+): ExecApprovalActionDescriptor[] {
+  const approvalCommandId = params.approvalCommandId.trim();
+  return approvalCommandId
+    ? buildApprovalActionDescriptors(approvalCommandId, resolveAllowedDecisions(params))
+    : [];
+}
+
 /** Build approval descriptors with explicit owner-aware typed actions. */
 export function buildTypedApprovalActionDescriptors(
   params: BuildExecApprovalActionDescriptorsParams & {
@@ -190,23 +195,25 @@ export function buildTypedApprovalActionDescriptors(
   },
 ): TypedApprovalActionDescriptor[] {
   const approvalId = params.approvalCommandId;
-  if (approvalId !== approvalId.trim() || !isWellFormedApprovalId(approvalId)) {
+  if (!isWellFormedApprovalId(approvalId)) {
     return [];
   }
-  return buildExecApprovalActionDescriptors(params).map((descriptor) => {
-    return {
-      decision: descriptor.decision,
-      label: descriptor.label,
-      style: descriptor.style,
-      command: descriptor.command,
-      action: {
-        type: "approval",
-        approvalId,
-        approvalKind: params.approvalKind,
+  return buildApprovalActionDescriptors(approvalId, resolveAllowedDecisions(params)).map(
+    (descriptor) => {
+      return {
         decision: descriptor.decision,
-      },
-    };
-  });
+        label: descriptor.label,
+        style: descriptor.style,
+        command: descriptor.command,
+        action: {
+          type: "approval",
+          approvalId,
+          approvalKind: params.approvalKind,
+          decision: descriptor.decision,
+        },
+      };
+    },
+  );
 }
 
 function buildApprovalInteractiveButtons(

@@ -18,10 +18,8 @@ import {
   resolveExecApprovalRequestAllowedDecisions,
   type ExecApprovalRequest,
 } from "./exec-approvals.js";
-import {
-  resolvePluginApprovalRequestAllowedDecisions,
-  type PluginApprovalRequest,
-} from "./plugin-approvals.js";
+import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "./plugin-approval-canonical-decisions.js";
+import type { PluginApprovalRequest } from "./plugin-approvals.js";
 
 type ApprovalPhase = "pending" | "resolved" | "expired";
 
@@ -124,7 +122,9 @@ export function buildPendingApprovalView(request: ApprovalRequest): PendingAppro
       actions: buildTypedApprovalActionDescriptors({
         approvalCommandId: pluginRequest.id,
         approvalKind,
-        allowedDecisions: resolvePluginApprovalRequestAllowedDecisions(pluginRequest.request),
+        allowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions(
+          pluginRequest.request,
+        ),
       }),
       expiresAtMs: pluginRequest.expiresAtMs,
     };

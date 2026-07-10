@@ -88,11 +88,7 @@ export async function resolveApprovalOverGateway(
     throw new Error("approval resolution requires a valid decision");
   }
   const approvalId = params.approvalId;
-  if (
-    typeof approvalId !== "string" ||
-    approvalId !== approvalId.trim() ||
-    !isWellFormedApprovalId(approvalId)
-  ) {
+  if (typeof approvalId !== "string" || !isWellFormedApprovalId(approvalId)) {
     throw new Error("approval resolution requires an approval id");
   }
 

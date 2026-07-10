@@ -493,6 +493,41 @@ describe("interactive payload helpers", () => {
     ).toBeUndefined();
   });
 
+  it("preserves protocol-valid boundary whitespace in typed approval actions", () => {
+    const approvalId = "\uFEFF";
+
+    expect(
+      normalizeMessagePresentation({
+        blocks: [
+          {
+            type: "buttons",
+            buttons: [
+              {
+                label: "Deny",
+                action: {
+                  type: "approval",
+                  approvalId,
+                  approvalKind: "exec",
+                  decision: "deny",
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject({
+      blocks: [
+        {
+          buttons: [
+            {
+              action: { type: "approval", approvalId, approvalKind: "exec", decision: "deny" },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("converts only presentation controls for native component renderers", () => {
     const presentation = {
       title: "Deploy approval",

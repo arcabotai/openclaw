@@ -620,7 +620,7 @@ describe("exec approval reply helpers", () => {
     });
   });
 
-  it.each([" leading", "trailing ", ".", "..", "\uD800", "\uDC00", "broken-\uD800"])(
+  it.each([".", "..", "\uD800", "\uDC00", "broken-\uD800"])(
     "refuses malformed typed approval identity %j",
     (approvalId) => {
       expect(
@@ -648,6 +648,22 @@ describe("exec approval reply helpers", () => {
       ).toBeUndefined();
     },
   );
+
+  it("preserves protocol-valid boundary whitespace in typed approval actions", () => {
+    const approvalId = "\uFEFF";
+
+    expect(
+      buildTypedApprovalActionDescriptors({
+        approvalCommandId: approvalId,
+        approvalKind: "exec",
+        allowedDecisions: ["deny"],
+      }),
+    ).toMatchObject([
+      {
+        action: { type: "approval", approvalId, approvalKind: "exec", decision: "deny" },
+      },
+    ]);
+  });
 
   it("builds and parses shared exec approval command text", () => {
     expect(

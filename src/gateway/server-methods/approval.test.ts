@@ -1099,6 +1099,7 @@ describe("unified approval handlers", () => {
     const managers = createManagers(databaseOptions);
     const pending = registerExec(managers.exec, {
       id: `approval/${"\u{1F4F1}".repeat(40)}/transport-limit`,
+      reviewerDeviceIds: ["telegram"],
     });
     const durable = getOperatorApproval({ id: pending.record.id, databaseOptions });
     expect(durable?.resolutionRef).toHaveLength(43);

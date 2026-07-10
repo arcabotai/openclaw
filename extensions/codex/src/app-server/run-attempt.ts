@@ -1482,6 +1482,7 @@ export async function runCodexAppServerAttempt(
     trajectoryRecorder: hostTrajectoryRecorder,
     trajectorySessionFile: params.trajectorySessionFile,
     tools: toolBridge.availableSpecs,
+    warn: (message, fields) => embeddedAgentLog.warn(message, fields),
   });
   let client: CodexAppServerClient;
   let thread: CodexAppServerThreadLifecycleBinding;

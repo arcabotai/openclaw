@@ -15,7 +15,7 @@ import type {
   ApplicationGatewayConnection,
   ApplicationGatewaySnapshot,
 } from "./context.ts";
-import { loadSettings, patchSettings } from "./settings.ts";
+import { loadSettings, patchSettings, persistSessionToken } from "./settings.ts";
 
 type GatewayClientFactory = (opts: GatewayBrowserClientOptions) => GatewayBrowserClient;
 
@@ -26,8 +26,10 @@ export function createApplicationGateway(
   initialPassword = "",
   initialBootstrapToken = "",
   createClient: GatewayClientFactory = defaultClientFactory,
+  options: { persistDefaultConnectionSettings?: boolean } = {},
 ): ApplicationGateway {
   let settings = initialSettings;
+  let persistConnectionSettings = options.persistDefaultConnectionSettings !== false;
   let connection: ApplicationGatewayConnection = {
     gatewayUrl: settings.gatewayUrl,
     token: settings.token,
@@ -81,6 +83,18 @@ export function createApplicationGateway(
       listener(eventLog);
     }
   };
+  const updateSettings = (patch: Partial<typeof settings>, selectGateway = false) => {
+    const next = { ...settings, ...patch };
+    if (!persistConnectionSettings && !selectGateway) {
+      settings = next;
+      if (patch.gatewayUrl !== undefined || patch.token !== undefined) {
+        persistSessionToken(next.gatewayUrl, next.token);
+      }
+      return;
+    }
+    persistConnectionSettings = true;
+    settings = patchSettings(patch, { selectGateway });
+  };
   const recordGatewayEvent = (event: Parameters<GatewayEventListener>[0]) => {
     eventLog = [{ ts: Date.now(), event: event.event, payload: event.payload }, ...eventLog].slice(
       0,
@@ -97,16 +111,19 @@ export function createApplicationGateway(
       ? requestedSessionKey.trim()
       : snapshot.sessionKey;
     connection = nextConnection;
-    settings = patchSettings({
-      gatewayUrl: nextConnection.gatewayUrl,
-      token: nextConnection.token,
-      ...(hasRequestedSessionKey
-        ? {
-            sessionKey: nextSessionKey,
-            lastActiveSessionKey: nextSessionKey,
-          }
-        : {}),
-    });
+    updateSettings(
+      {
+        gatewayUrl: nextConnection.gatewayUrl,
+        token: nextConnection.token,
+        ...(hasRequestedSessionKey
+          ? {
+              sessionKey: nextSessionKey,
+              lastActiveSessionKey: nextSessionKey,
+            }
+          : {}),
+      },
+      persistConnectionSettings || connectionOverrides.gatewayUrl !== undefined,
+    );
     client?.stop();
     stopClientEvents?.();
     stopClientEvents = undefined;
@@ -127,7 +144,9 @@ export function createApplicationGateway(
           return;
         }
         connection = { ...connection, bootstrapToken: "" };
-        settings = loadSettings();
+        if (persistConnectionSettings) {
+          settings = loadSettings();
+        }
         const sessionDefaults = readSessionDefaults(hello);
         const sessionKey = resolveSessionKey(snapshot.sessionKey, hello);
         const lastActiveSessionKey = resolveSessionKey(settings.lastActiveSessionKey, hello);
@@ -135,7 +154,7 @@ export function createApplicationGateway(
           sessionKey !== settings.sessionKey ||
           lastActiveSessionKey !== settings.lastActiveSessionKey
         ) {
-          settings = patchSettings({
+          updateSettings({
             sessionKey,
             lastActiveSessionKey,
           });
@@ -213,7 +232,7 @@ export function createApplicationGateway(
       if (!nextSessionKey || nextSessionKey === snapshot.sessionKey) {
         return;
       }
-      settings = patchSettings({
+      updateSettings({
         sessionKey: nextSessionKey,
         lastActiveSessionKey: nextSessionKey,
       });

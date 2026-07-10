@@ -34,6 +34,7 @@ import { isWorkboardEnabledInConfigSnapshot } from "../lib/plugin-activation.ts"
 import { searchForSession } from "../lib/sessions/index.ts";
 import { OpenClawLightDomElement } from "../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../lit/subscriptions-controller.ts";
+import "../pages/approval/approval-page.ts";
 import { renderDevicePairSetup } from "../pages/nodes/view-pairing.ts";
 import { pluginTabKey, pluginTabRefFromSearch } from "../pages/plugin/route.ts";
 import { bootstrapApplication, type ApplicationRuntime } from "./bootstrap.ts";
@@ -104,6 +105,25 @@ function renderConnectingSplash(basePath: string) {
         alt=""
       />
     </main>
+  `;
+}
+
+function renderApprovalDocument(runtime: ApplicationRuntime) {
+  const documentMode = runtime.documentMode;
+  if (documentMode?.kind !== "approval") {
+    return nothing;
+  }
+  return html`
+    <openclaw-approval-page .approvalId=${documentMode.approvalId ?? ""}>
+      <main class="approval-page approval-page--booting" role="status" aria-live="polite">
+        <img
+          class="connect-splash__logo"
+          src=${controlUiPublicAssetPath("favicon.svg", runtime.context.basePath)}
+          alt=""
+        />
+        <span>${t("common.loading")}</span>
+      </main>
+    </openclaw-approval-page>
   `;
 }
 
@@ -341,6 +361,13 @@ class OpenClawApp extends OpenClawLightDomElement {
             }}
           ></openclaw-login-gate>
           ${gatewayUrlConfirmation}
+        </openclaw-tooltip-provider>
+      `;
+    }
+    if (runtime.documentMode?.kind === "approval") {
+      return html`
+        <openclaw-tooltip-provider>
+          ${gatewayUrlConfirmation} ${renderApprovalDocument(runtime)}
         </openclaw-tooltip-provider>
       `;
     }

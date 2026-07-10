@@ -341,6 +341,28 @@ function deriveDefaultGatewayUrl(): { pageUrl: string; effectiveUrl: string } {
   return { pageUrl, effectiveUrl };
 }
 
+/**
+ * Standalone documents are owned by the Gateway that served their URL. Do not
+ * let the full app's persisted remote selection retarget a security decision.
+ * Native auth and explicit URL overrides are applied after this default.
+ */
+export function resolvePageGatewaySettings(settings: UiSettings): UiSettings {
+  const { effectiveUrl } = deriveDefaultGatewayUrl();
+  if (
+    normalizeGatewayTokenScope(settings.gatewayUrl) === normalizeGatewayTokenScope(effectiveUrl)
+  ) {
+    return settings;
+  }
+  const session = loadGatewaySessionSelection(effectiveUrl);
+  return {
+    ...settings,
+    gatewayUrl: effectiveUrl,
+    token: resolveGatewayTokenForUrlEdit(settings.gatewayUrl, settings.token, effectiveUrl),
+    sessionKey: session.sessionKey,
+    lastActiveSessionKey: session.lastActiveSessionKey,
+  };
+}
+
 function getSessionStorage(): Storage | null {
   return getSafeSessionStorage();
 }
@@ -506,7 +528,7 @@ export function resolveGatewayTokenForUrlEdit(
   return loadSessionToken(nextGatewayUrl);
 }
 
-function persistSessionToken(gatewayUrl: string, token: string) {
+export function persistSessionToken(gatewayUrl: string, token: string) {
   try {
     const storage = getSessionStorage();
     if (!storage) {
@@ -639,9 +661,14 @@ export function saveSettings(next: UiSettings) {
   persistSettings(next);
 }
 
-export function patchSettings(patch: Partial<UiSettings>): UiSettings {
+export function patchSettings(
+  patch: Partial<UiSettings>,
+  options: { selectGateway?: boolean } = {},
+): UiSettings {
   const next = { ...loadSettings(), ...patch };
-  persistSettings(next, { selectGateway: patch.gatewayUrl !== undefined });
+  persistSettings(next, {
+    selectGateway: options.selectGateway ?? patch.gatewayUrl !== undefined,
+  });
   return next;
 }
 

@@ -25,6 +25,7 @@ import {
   type GatewayAuthResult,
   type ResolvedGatewayAuth,
 } from "./auth.js";
+import { isControlUiApprovalDocumentPath } from "./control-ui-routing.js";
 import type { ControlUiRootState } from "./control-ui.js";
 import type { AuthorizedGatewayHttpRequest } from "./http-auth-utils.js";
 import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common.js";
@@ -540,6 +541,19 @@ export function createGatewayHttpServer(opts: {
         ? resolvePluginRoutePathContext(scopedRequestPath)
         : null;
       const resolvedAuthValue = getResolvedAuth();
+      const handleControlUiRequest = async () =>
+        (await getControlUiModule()).handleControlUiHttpRequest(req, res, {
+          basePath: controlUiBasePath,
+          config: configSnapshot,
+          terminalEnabled:
+            opts.isTerminalEnabled?.() ?? configSnapshot.gateway?.terminal?.enabled === true,
+          agentId: resolveAssistantIdentity({ cfg: configSnapshot }).agentId,
+          root: controlUiRoot,
+          auth: resolvedAuthValue,
+          trustedProxies,
+          allowRealIpFallback,
+          rateLimiter,
+        });
       const requestStages: GatewayHttpRequestStage[] = [
         {
           name: "gateway-probes",
@@ -653,6 +667,32 @@ export function createGatewayHttpServer(opts: {
         });
       }
       if (
+        isControlUiApprovalDocumentPath({
+          basePath: controlUiBasePath,
+          pathname: scopedRequestPath,
+        })
+      ) {
+        requestStages.push({
+          name: "control-ui-approval-document",
+          run: async () => {
+            if (!controlUiEnabled) {
+              res.statusCode = 404;
+              res.setHeader("Content-Type", "text/plain; charset=utf-8");
+              res.end("Not Found");
+              return true;
+            }
+            const handled = await handleControlUiRequest();
+            if (handled) {
+              return true;
+            }
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
+            res.end("Not Found");
+            return true;
+          },
+        });
+      }
+      if (
         handlePluginRequest &&
         pluginPathContext &&
         resolvePluginNodeCapabilityRoute?.(pluginPathContext)
@@ -753,19 +793,7 @@ export function createGatewayHttpServer(opts: {
         });
         requestStages.push({
           name: "control-ui-http",
-          run: async () =>
-            (await getControlUiModule()).handleControlUiHttpRequest(req, res, {
-              basePath: controlUiBasePath,
-              config: configSnapshot,
-              terminalEnabled:
-                opts.isTerminalEnabled?.() ?? configSnapshot.gateway?.terminal?.enabled === true,
-              agentId: resolveAssistantIdentity({ cfg: configSnapshot }).agentId,
-              root: controlUiRoot,
-              auth: resolvedAuthValue,
-              trustedProxies,
-              allowRealIpFallback,
-              rateLimiter,
-            }),
+          run: handleControlUiRequest,
         });
       }
 

@@ -2,7 +2,26 @@
  * Control UI gateway routing tests.
  */
 import { describe, expect, it } from "vitest";
-import { classifyControlUiRequest } from "./control-ui-routing.js";
+import { classifyControlUiRequest, isControlUiApprovalDocumentPath } from "./control-ui-routing.js";
+
+describe("isControlUiApprovalDocumentPath", () => {
+  it.each([
+    { basePath: "", pathname: "/approve" },
+    { basePath: "", pathname: "/approve/" },
+    { basePath: "", pathname: "/approve/plugin%3Arequest.json" },
+    { basePath: "/openclaw", pathname: "/openclaw/approve/exec%3Aa%2Fb" },
+  ])("reserves $pathname", ({ basePath, pathname }) => {
+    expect(isControlUiApprovalDocumentPath({ basePath, pathname })).toBe(true);
+  });
+
+  it.each([
+    { basePath: "", pathname: "/approvals/id" },
+    { basePath: "", pathname: "/approve/id/extra" },
+    { basePath: "/openclaw", pathname: "/approve/id" },
+  ])("does not reserve $pathname", ({ basePath, pathname }) => {
+    expect(isControlUiApprovalDocumentPath({ basePath, pathname })).toBe(false);
+  });
+});
 
 describe("classifyControlUiRequest", () => {
   describe("root-mounted control ui", () => {

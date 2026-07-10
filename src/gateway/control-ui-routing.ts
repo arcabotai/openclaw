@@ -9,6 +9,23 @@ type ControlUiRequestClassification =
 
 const ROOT_MOUNTED_GATEWAY_PROBE_PATHS = new Set(["/health", "/healthz", "/ready", "/readyz"]);
 
+/** Core-owned standalone approval document namespace, before plugin routing. */
+export function isControlUiApprovalDocumentPath(params: {
+  basePath: string;
+  pathname: string;
+}): boolean {
+  const root = `${params.basePath}/approve`;
+  if (params.pathname === root || params.pathname === `${root}/`) {
+    return true;
+  }
+  const prefix = `${root}/`;
+  if (!params.pathname.startsWith(prefix)) {
+    return false;
+  }
+  const encodedId = params.pathname.slice(prefix.length);
+  return encodedId.length > 0 && !encodedId.includes("/");
+}
+
 /** Classify an HTTP request as Control UI serving, redirect, 404, or non-Control-UI. */
 export function classifyControlUiRequest(params: {
   basePath: string;

@@ -20,6 +20,20 @@ struct MenuContentSmokeTests {
         #expect(steps == ["failsafe", "terminate"])
     }
 
+    @Test func `signal exit failsafe fires while AppKit termination blocks the main actor`() {
+        let fired = DispatchSemaphore(value: 0)
+
+        TerminationSignalWatcher.requestTermination(
+            armFailsafe: {
+                TerminationSignalWatcher.armExitFailsafe(after: 0.01) {
+                    fired.signal()
+                }
+            },
+            terminateApplication: {
+                #expect(fired.wait(timeout: .now() + 1) == .success)
+            })
+    }
+
     @Test func `menu content builds body local mode`() {
         let state = AppState(preview: true)
         state.connectionMode = .local

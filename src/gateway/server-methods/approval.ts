@@ -590,16 +590,22 @@ export function createApprovalHandlers(
         respondApprovalNotFound(respond);
         return;
       }
+      respond(true, { applied: resolution.applied, approval }, undefined);
       if (resolution.applied && resolution.liveRecord) {
-        await publishAppliedResolution({
+        // SQLite CAS is canonical. Never make the winning surface wait for
+        // best-effort channel, push, or legacy-event reconciliation.
+        void publishAppliedResolution({
           record: terminalRecord,
           liveRecord: resolution.liveRecord,
           context,
           forwarder: params.forwarder,
           iosPushDelivery: params.iosPushDelivery,
+        }).catch((error: unknown) => {
+          context.logGateway?.error?.(
+            `${terminalRecord.kind} approvals: unified resolve publication failed: ${String(error)}`,
+          );
         });
       }
-      respond(true, { applied: resolution.applied, approval }, undefined);
     },
   };
 }

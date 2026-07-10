@@ -897,6 +897,61 @@ describe("unified approval handlers", () => {
     );
   });
 
+  it("responds with committed truth before a slow resolution forwarder finishes", async () => {
+    const databaseOptions = createDatabaseOptions();
+    const managers = createManagers(databaseOptions);
+    const pending = registerExec(managers.exec, { id: "exec-slow-resolution-forwarder" });
+    let releaseForwarder!: () => void;
+    const forwarderPending = new Promise<void>((resolve) => {
+      releaseForwarder = resolve;
+    });
+    const handleResolved = vi.fn(() => forwarderPending);
+    const forwarder = {
+      handleRequested: vi.fn(async () => false),
+      handleResolved,
+      handlePluginApprovalRequested: vi.fn(async () => false),
+      handlePluginApprovalResolved: vi.fn(async () => {}),
+      stop: vi.fn(),
+    } satisfies ExecApprovalForwarder;
+    const handlers = createApprovalHandlers({
+      execApprovalManager: managers.exec,
+      pluginApprovalManager: managers.plugin,
+      forwarder,
+      databaseOptions,
+    });
+    const respond = vi.fn();
+    const handler = handlers["approval.resolve"]({
+      req: {
+        id: "req-slow-forwarder",
+        type: "req",
+        method: "approval.resolve",
+        params: { id: pending.record.id, kind: "exec", decision: "deny" },
+      },
+      params: { id: pending.record.id, kind: "exec", decision: "deny" },
+      client: createClient({ deviceId: "reviewer" }),
+      context: createContext(),
+      isWebchatConnect: () => false,
+      respond,
+    });
+    let handlerFinished = false;
+    const handlerCompletion = Promise.resolve(handler).then(() => {
+      handlerFinished = true;
+    });
+
+    try {
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 500 });
+      expect(respond.mock.calls[0]?.[1]).toMatchObject({
+        applied: true,
+        approval: { status: "denied", decision: "deny" },
+      });
+      await vi.waitFor(() => expect(handleResolved).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(handlerFinished).toBe(true), { timeout: 500 });
+    } finally {
+      releaseForwarder();
+    }
+    await handlerCompletion;
+  });
+
   it("continues plugin forwarding when the resolved-event broadcast fails", async () => {
     const databaseOptions = createDatabaseOptions();
     const managers = createManagers(databaseOptions);

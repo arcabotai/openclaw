@@ -64,7 +64,6 @@ import {
   getGeneratedMediaTaskIdsForSessionKey,
   hasNewGeneratedMediaTaskForSessionKey,
 } from "../tasks/task-status-access.js";
-import { removeSessionTrajectoryArtifacts } from "../trajectory/cleanup.js";
 import { createTrajectoryRuntimeRecorder } from "../trajectory/runtime.js";
 import { resolveUserPath } from "../utils.js";
 import {
@@ -121,10 +120,9 @@ import { runAgentHarnessBeforeMessageWriteHook } from "./harness/hook-helpers.js
 import { ensureSelectedAgentHarnessPlugin } from "./harness/runtime-plugin.js";
 import { resolveAvailableAgentHarnessPolicy } from "./harness/selection.js";
 import {
-  isInternalSessionEffectsTranscriptPath,
-  prepareInternalSessionEffectsTranscript,
-  removeInternalSessionEffectsTranscript,
-  resolveInternalSessionEffectsTranscriptPath,
+  prepareInternalSessionEffectsSession,
+  removeInternalSessionEffectsSession,
+  resolveInternalSessionEffectsTarget,
 } from "./internal-session-effects.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch.js";
@@ -149,6 +147,7 @@ import {
 } from "./model-visibility-policy.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "./openai-routing.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
+import type { AgentRunSessionTarget } from "./run-session-target.js";
 import {
   createAgentRunRestartAbortError,
   isAgentRunDirectAbortReason,
@@ -616,6 +615,25 @@ function createAgentCommandSessionWorkingCopy(params: {
   return result;
 }
 
+function resolveInternalSessionEffectsSource(params: {
+  agentId: string;
+  sessionId: string;
+  sessionKey?: string;
+  storePath?: string;
+}):
+  | Required<Pick<AgentRunSessionTarget, "agentId" | "sessionId" | "sessionKey" | "storePath">>
+  | undefined {
+  if (!params.storePath || !params.sessionKey) {
+    return undefined;
+  }
+  return {
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    storePath: params.storePath,
+  };
+}
+
 function resolveExplicitAgentCommandSessionKey(params: {
   rawExplicitSessionKey?: string;
   agentIdOverride?: string;
@@ -972,24 +990,21 @@ async function agentCommandInternal(
   let currentRunDeliveryContext: DeliveryContext | undefined;
   const preparedSessionId = sessionEntry?.sessionId;
   const sessionStoreRuntime = storePath && sessionKey ? await loadSessionStoreRuntime() : undefined;
-  const internalModelRunArtifacts =
+  const internalModelRunTargets =
     initialOpts.modelRun === true && suppressVisibleSessionEffects
-      ? new Map<string, { sessionFile: string; sessionId: string }>()
+      ? new Map<string, AgentRunSessionTarget>()
       : undefined;
-  const trackInternalModelRunArtifact = (
-    sessionFile: string | undefined,
-    artifactSessionId: string,
-  ) => {
-    if (!internalModelRunArtifacts || !isInternalSessionEffectsTranscriptPath(sessionFile)) {
+  const trackInternalModelRunTarget = (target: AgentRunSessionTarget | undefined) => {
+    if (!internalModelRunTargets || !target?.sessionKey || !target.storePath) {
       return;
     }
-    internalModelRunArtifacts.set(`${artifactSessionId}\n${sessionFile}`, {
-      sessionFile,
-      sessionId: artifactSessionId,
-    });
+    internalModelRunTargets.set(`${target.storePath}\n${target.sessionKey}`, target);
   };
-  // Precompute the owned path so even a partially failed prepare can be cleaned.
-  trackInternalModelRunArtifact(resolveInternalSessionEffectsTranscriptPath(runId), sessionId);
+  if (internalModelRunTargets && storePath) {
+    trackInternalModelRunTarget(
+      resolveInternalSessionEffectsTarget({ agentId: sessionAgentId, runId, storePath }),
+    );
+  }
 
   // Reset marks its mutation before interrupting work. An aborted run must not
   // queue behind that mutation or reset would wait on the run holding the queue.
@@ -1097,7 +1112,7 @@ async function agentCommandInternal(
                   allowCreateRestartRecoveryEntry,
                 ),
         });
-        sessionEntry = persisted ?? sessionEntry;
+        sessionEntry = persisted;
         trackedRestartRecoveryDeliveryContext =
           Boolean(persisted?.restartRecoveryDeliveryContext) &&
           persisted?.restartRecoveryDeliveryRunId === runId;
@@ -1230,25 +1245,26 @@ async function agentCommandInternal(
         const finalTextRaw = visibleTextAccumulator.finalizeRaw();
         const finalText = visibleTextAccumulator.finalize();
         try {
-          const [{ resolveAcpSessionCwd }, { resolveSessionTranscriptFile }] = await Promise.all([
-            loadAcpSessionIdentifiersRuntime(),
-            loadTranscriptResolveRuntime(),
-          ]);
+          const { resolveAcpSessionCwd } = await loadAcpSessionIdentifiersRuntime();
           const internalSource = suppressVisibleSessionEffects
-            ? await resolveSessionTranscriptFile({
+            ? resolveInternalSessionEffectsSource({
+                agentId: sessionAgentId,
                 sessionId,
                 sessionKey,
-                sessionEntry,
+                storePath,
+              })
+            : undefined;
+          const internalTarget = suppressVisibleSessionEffects
+            ? await prepareInternalSessionEffectsSession({
                 agentId: sessionAgentId,
-                threadId: opts.threadId,
-              })
-            : undefined;
-          const internalSessionFile = suppressVisibleSessionEffects
-            ? await prepareInternalSessionEffectsTranscript({
-                sessionFile: internalSource?.sessionFile,
+                cwd: resolveAcpSessionCwd(acpResolution.meta) ?? workspaceDir,
                 runId,
+                source: internalSource,
+                storePath,
               })
             : undefined;
+          trackInternalModelRunTarget(internalTarget);
+          const transcriptSessionEntry = internalTarget?.sessionEntry ?? sessionEntry;
           const transcriptResult = await attemptExecutionRuntime.persistAcpTurnTranscript({
             body,
             transcriptBody,
@@ -1262,20 +1278,18 @@ async function agentCommandInternal(
                 }
               : {}),
             finalText: finalTextRaw,
-            sessionId,
-            sessionKey,
-            sessionFile: internalSessionFile,
-            sessionEntry,
+            sessionId: internalTarget?.sessionId ?? sessionId,
+            sessionKey: internalTarget?.sessionKey ?? sessionKey,
+            sessionEntry: transcriptSessionEntry,
             sessionStore: suppressVisibleSessionEffects ? undefined : sessionStore,
-            storePath: suppressVisibleSessionEffects ? undefined : storePath,
-            sessionAgentId,
+            storePath: internalTarget?.storePath ?? storePath,
+            sessionAgentId: internalTarget?.agentId ?? sessionAgentId,
             threadId: opts.threadId,
             sessionCwd: resolveAcpSessionCwd(acpResolution.meta) ?? workspaceDir,
             config: cfg,
           });
-          sessionEntry = transcriptResult.sessionEntry;
-          if (internalSessionFile) {
-            sessionEntry = prepared.sessionEntry;
+          if (!internalTarget) {
+            sessionEntry = transcriptResult.sessionEntry;
           }
         } catch (error) {
           log.warn(
@@ -1404,7 +1418,7 @@ async function agentCommandInternal(
           initialEntry: current,
           entry: next,
         });
-        sessionEntry = persisted ?? sessionEntry;
+        sessionEntry = persisted;
       }
 
       // Persist non-model-dependent command state before provider/model resolution.
@@ -1436,7 +1450,7 @@ async function agentCommandInternal(
           initialEntry: entry,
           entry: next,
         });
-        sessionEntry = persisted ?? sessionEntry;
+        sessionEntry = persisted;
       }
 
       const configuredDefaultRef = resolveDefaultModelForAgent({
@@ -1564,12 +1578,12 @@ async function agentCommandInternal(
             initialEntry,
             entry,
           });
-          sessionEntry = persisted ?? sessionEntry;
+          sessionEntry = persisted;
           const adoptedHasStoredOverride = Boolean(
-            sessionEntry.modelOverride || sessionEntry.providerOverride,
+            sessionEntry?.modelOverride || sessionEntry?.providerOverride,
           );
           storedModelOverrideSource = adoptedHasStoredOverride
-            ? sessionEntry.modelOverrideSource
+            ? sessionEntry?.modelOverrideSource
             : undefined;
           hasStoredAutoFallbackProvenance =
             adoptedHasStoredOverride && hasSessionAutoModelFallbackProvenance(sessionEntry);
@@ -1892,10 +1906,23 @@ async function agentCommandInternal(
         sessionFile = resolvedSessionFile.sessionFile;
         sessionEntry = resolvedSessionFile.sessionEntry;
       }
-      const attemptSessionFile = suppressVisibleSessionEffects
-        ? await prepareInternalSessionEffectsTranscript({ sessionFile, runId })
-        : sessionFile;
-      trackInternalModelRunArtifact(attemptSessionFile, sessionId);
+      const sessionEffectsSource = resolveInternalSessionEffectsSource({
+        agentId: sessionAgentId,
+        sessionId,
+        sessionKey,
+        storePath,
+      });
+      const internalSessionTarget = suppressVisibleSessionEffects
+        ? await prepareInternalSessionEffectsSession({
+            agentId: sessionAgentId,
+            cwd: cwd ?? workspaceDir,
+            runId,
+            source: sessionEffectsSource,
+            storePath,
+          })
+        : undefined;
+      trackInternalModelRunTarget(internalSessionTarget);
+      const attemptSessionFile = internalSessionTarget?.sessionFile ?? sessionFile;
 
       const startedAt = Date.now();
       const attemptLifecycleState: AgentAttemptLifecycleState = {
@@ -1925,10 +1952,12 @@ async function agentCommandInternal(
             }
           : {}),
         target: {
-          transcriptPath: attemptSessionFile,
-          sessionId,
-          agentId: sessionAgentId,
-          ...(sessionKey ? { sessionKey } : {}),
+          sessionId: internalSessionTarget?.sessionId ?? sessionId,
+          agentId: internalSessionTarget?.agentId ?? sessionAgentId,
+          sessionKey: internalSessionTarget?.sessionKey ?? sessionKey ?? sessionId,
+          sessionEntry: internalSessionTarget?.sessionEntry ?? sessionEntry,
+          sessionStore: suppressVisibleSessionEffects ? undefined : sessionStore,
+          storePath: internalSessionTarget?.storePath ?? storePath,
           cwd: cwd ?? workspaceDir,
           config: cfg,
         },
@@ -2238,6 +2267,7 @@ async function agentCommandInternal(
                 agentHarnessRuntimeOverride,
                 sessionId,
                 sessionKey,
+                ...(internalSessionTarget ? { sessionTarget: internalSessionTarget } : {}),
                 sessionAgentId,
                 sessionFile: attemptSessionFile,
                 workspaceDir,
@@ -2325,7 +2355,7 @@ async function agentCommandInternal(
                   entryMatchesAutoFallbackPrimaryProbe(current, autoFallbackPrimaryProbe),
                 ),
             });
-            sessionEntry = persistedEntry ?? sessionEntry;
+            sessionEntry = persistedEntry;
           }
           if (fallbackResult.attempts.length > 0 && result.meta.agentMeta) {
             result = {
@@ -2472,11 +2502,11 @@ async function agentCommandInternal(
 
         const rotatedSessionFile = result.meta.agentMeta?.sessionFile;
         const effectiveSessionId = rotatedSessionFile
-          ? (result.meta.agentMeta?.sessionId ?? sessionId)
-          : sessionId;
-        const effectiveSessionFile = rotatedSessionFile ?? attemptSessionFile;
-        trackInternalModelRunArtifact(effectiveSessionFile, effectiveSessionId);
-
+          ? (result.meta.agentMeta?.sessionId ?? internalSessionTarget?.sessionId ?? sessionId)
+          : (internalSessionTarget?.sessionId ?? sessionId);
+        if (internalSessionTarget && effectiveSessionId !== internalSessionTarget.sessionId) {
+          trackInternalModelRunTarget({ ...internalSessionTarget, sessionId: effectiveSessionId });
+        }
         // Update token+model fields in the session store.
         if (sessionStore && sessionKey && !suppressVisibleSessionEffects) {
           const isHeartbeatLifecycleRun = isHeartbeatLifecycleRunKind(opts.bootstrapContextRunKind);
@@ -2518,17 +2548,17 @@ async function agentCommandInternal(
         ) {
           let persistedCliTurnTranscript = false;
           try {
+            const transcriptSessionEntry = internalSessionTarget?.sessionEntry ?? sessionEntry;
             const transcriptResult = await attemptExecutionRuntime.persistCliTurnTranscript({
               body,
               transcriptBody,
               result,
               sessionId: effectiveSessionId,
-              sessionKey: sessionKey ?? effectiveSessionId,
-              sessionFile: suppressVisibleSessionEffects ? effectiveSessionFile : undefined,
-              sessionEntry,
+              sessionKey: internalSessionTarget?.sessionKey ?? sessionKey ?? effectiveSessionId,
+              sessionEntry: transcriptSessionEntry,
               sessionStore: suppressVisibleSessionEffects ? undefined : sessionStore,
-              storePath: suppressVisibleSessionEffects ? undefined : storePath,
-              sessionAgentId,
+              storePath: internalSessionTarget?.storePath ?? storePath,
+              sessionAgentId: internalSessionTarget?.agentId ?? sessionAgentId,
               threadId: opts.threadId,
               sessionCwd: effectiveCwd,
               config: cfg,
@@ -2538,10 +2568,9 @@ async function agentCommandInternal(
                 userTurnTranscriptRecorder.hasPersisted() ||
                 userTurnTranscriptRecorder.isBlocked(),
             });
-            sessionEntry = transcriptResult.sessionEntry;
             sessionReboundDuringRun = transcriptResult.kind === "session-rebound";
-            if (suppressVisibleSessionEffects) {
-              sessionEntry = prepared.sessionEntry;
+            if (!internalSessionTarget) {
+              sessionEntry = transcriptResult.sessionEntry;
             }
             persistedCliTurnTranscript = transcriptResult.kind === "persisted";
           } catch (error) {
@@ -2600,23 +2629,26 @@ async function agentCommandInternal(
 
           if (combinedPayload) {
             const entry = sessionStore[sessionKey] ?? sessionEntry;
-            const next: SessionEntry = {
-              ...entry,
-              pendingFinalDelivery: true,
-              pendingFinalDeliveryText: combinedPayload,
-              pendingFinalDeliveryContext: currentRunDeliveryContext,
-              pendingFinalDeliveryCreatedAt: now,
-              updatedAt: now,
-            };
-            const persisted = await persistSessionEntry({
-              sessionStore,
-              sessionKey,
-              storePath,
-              initialEntry: entry,
-              entry: next,
-              shouldPersist: (current) => shouldPersistCurrentRunSessionCleanup(current, sessionId),
-            });
-            sessionEntry = persisted ?? sessionEntry;
+            if (entry) {
+              const next: SessionEntry = {
+                ...entry,
+                pendingFinalDelivery: true,
+                pendingFinalDeliveryText: combinedPayload,
+                pendingFinalDeliveryContext: currentRunDeliveryContext,
+                pendingFinalDeliveryCreatedAt: now,
+                updatedAt: now,
+              };
+              const persisted = await persistSessionEntry({
+                sessionStore,
+                sessionKey,
+                storePath,
+                initialEntry: entry,
+                entry: next,
+                shouldPersist: (current) =>
+                  shouldPersistCurrentRunSessionCleanup(current, sessionId),
+              });
+              sessionEntry = persisted;
+            }
           }
         }
 
@@ -2624,12 +2656,13 @@ async function agentCommandInternal(
         const resolveFreshSessionEntryForDelivery =
           sessionStore && sessionKey && !suppressVisibleSessionEffects
             ? async (): Promise<SessionEntry | undefined> => {
-                const { loadSessionStore } = await loadSessionStoreRuntime();
-                const freshStore = loadSessionStore(storePath, {
-                  skipCache: true,
+                const { loadSessionEntry } = await loadSessionStoreRuntime();
+                const freshEntry = loadSessionEntry({
+                  storePath,
+                  sessionKey,
+                  readConsistency: "latest",
                   clone: false,
                 });
-                const freshEntry = freshStore[sessionKey];
                 if (!freshEntry || freshEntry.sessionId !== effectiveSessionId) {
                   return undefined;
                 }
@@ -2671,9 +2704,9 @@ async function agentCommandInternal(
           const noPendingTextForThisRun =
             opts.deliver === true &&
             pendingFinalDeliveryTextForThisRun === undefined &&
-            entry.pendingFinalDelivery === true &&
+            entry?.pendingFinalDelivery === true &&
             !entry.pendingFinalDeliveryText;
-          if (deliveryResult?.deliverySucceeded === true || noPendingTextForThisRun) {
+          if (entry && (deliveryResult?.deliverySucceeded === true || noPendingTextForThisRun)) {
             const next = clearPendingFinalDeliveryFields(entry, Date.now());
             const persisted = await persistSessionEntry({
               sessionStore,
@@ -2683,7 +2716,7 @@ async function agentCommandInternal(
               entry: next,
               shouldPersist: (current) => shouldPersistCurrentRunSessionCleanup(current, sessionId),
             });
-            sessionEntry = persisted ?? sessionEntry;
+            sessionEntry = persisted;
           }
         }
 
@@ -2700,28 +2733,21 @@ async function agentCommandInternal(
     });
   } finally {
     sessionWorkAdmission.release();
-    if (internalModelRunArtifacts) {
-      // Compaction may rotate a private transcript. Clean every owned identity
-      // only after delivery, then remove each transcript after its sidecars.
-      for (const artifact of internalModelRunArtifacts.values()) {
+    if (internalModelRunTargets) {
+      // Compaction may rotate a private session identity. Remove every owned
+      // SQLite row only after delivery; transcript and trajectory rows cascade.
+      for (const target of internalModelRunTargets.values()) {
         try {
-          await removeSessionTrajectoryArtifacts({
-            sessionId: artifact.sessionId,
-            sessionFile: artifact.sessionFile,
-            storePath: artifact.sessionFile,
-          });
+          await removeInternalSessionEffectsSession(target);
         } catch (error) {
+          // Cleanup remains best-effort so a terminal SQLite write failure does
+          // not replace the completed model-run result; the DB layer warns too.
           log.warn(
-            `failed to remove model-run trajectory artifacts: ${
+            `failed to remove model-run SQLite session: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );
         }
-      }
-      for (const sessionFile of new Set(
-        Array.from(internalModelRunArtifacts.values(), (artifact) => artifact.sessionFile),
-      )) {
-        await removeInternalSessionEffectsTranscript(sessionFile);
       }
     }
     if (
@@ -2748,7 +2774,7 @@ async function agentCommandInternal(
             shouldPersist: (current) =>
               shouldPersistRestartRecoveryCleanup(current, sessionId, runId),
           });
-          sessionEntry = persisted ?? sessionEntry;
+          sessionEntry = persisted;
         }
       } catch (error) {
         log.warn(

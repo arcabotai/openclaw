@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type {
   ContextEnginePromptCacheInfo,
   ContextEngineRuntimeContext,
+  ContextEngineSessionTarget,
 } from "../../../context-engine/types.js";
 import { drainPluginNextTurnInjectionContext } from "../../../plugins/host-hook-state.js";
 import { buildPluginAgentTurnPrepareContext } from "../../../plugins/host-hooks.js";
@@ -18,6 +19,7 @@ import type {
 } from "../../../plugins/types.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../../../routing/session-key.js";
 import { joinPresentTextSegments } from "../../../shared/text/join-segments.js";
+import { truncateUtf16Safe } from "../../../utils.js";
 import { resolveProcessToolScopeKey } from "../../agent-tools.js";
 import { listActiveProcessSessionReferences } from "../../bash-process-references.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
@@ -30,7 +32,6 @@ import { buildActiveVideoGenerationTaskPromptContextForSession } from "../../vid
 import { buildEmbeddedCompactionRuntimeContext } from "../compaction-runtime-context.js";
 import { resolveContextEngineCapabilities } from "../context-engine-capabilities.js";
 import { log } from "../logger.js";
-import { truncateUtf16Safe } from "../../../utils.js";
 import { shouldInjectHeartbeatPromptForTrigger } from "./trigger-policy.js";
 import type { EmbeddedRunAttemptParams } from "./types.js";
 
@@ -559,6 +560,7 @@ export function resolveAttemptMediaTaskSystemPromptAddition(params: {
 
 type AfterTurnRuntimeContextAttempt = Pick<
   EmbeddedRunAttemptParams,
+  | "sessionTarget"
   | "sessionKey"
   | "sandboxSessionKey"
   | "messageChannel"
@@ -583,6 +585,32 @@ type AfterTurnRuntimeContextAttempt = Pick<
   sessionId?: EmbeddedRunAttemptParams["sessionId"];
 };
 
+function resolveRuntimeContextSessionTarget(params: {
+  attempt: AfterTurnRuntimeContextAttempt;
+  activeAgentId?: string;
+}): ContextEngineSessionTarget | undefined {
+  const sessionTarget = params.attempt.sessionTarget;
+  const agentId = sessionTarget?.agentId ?? params.activeAgentId;
+  const sessionId = sessionTarget?.sessionId ?? params.attempt.sessionId;
+  const sessionKey = sessionTarget?.sessionKey ?? params.attempt.sessionKey;
+  if (
+    !agentId &&
+    !sessionId &&
+    !sessionKey &&
+    !sessionTarget?.storePath &&
+    sessionTarget?.threadId === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(sessionTarget?.storePath ? { storePath: sessionTarget.storePath } : {}),
+    ...(sessionTarget?.threadId !== undefined ? { threadId: sessionTarget.threadId } : {}),
+  };
+}
+
 /** Build runtime context passed into context-engine afterTurn hooks. */
 export function buildAfterTurnRuntimeContext(params: {
   attempt: AfterTurnRuntimeContextAttempt;
@@ -595,6 +623,10 @@ export function buildAfterTurnRuntimeContext(params: {
   currentTokenCount?: number;
   promptCache?: ContextEnginePromptCacheInfo;
 }): ContextEngineRuntimeContext {
+  const sessionTarget = resolveRuntimeContextSessionTarget({
+    attempt: params.attempt,
+    activeAgentId: params.activeAgentId,
+  });
   return {
     ...buildEmbeddedCompactionRuntimeContext({
       sessionKey: params.attempt.sessionKey,
@@ -646,6 +678,8 @@ export function buildAfterTurnRuntimeContext(params: {
       ? { currentTokenCount: Math.floor(params.currentTokenCount) }
       : {}),
     ...(params.promptCache ? { promptCache: params.promptCache } : {}),
+    transcriptStorage: { kind: "sqlite" },
+    ...(sessionTarget ? { sessionTarget } : {}),
   };
 }
 

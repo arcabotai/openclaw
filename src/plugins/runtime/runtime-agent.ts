@@ -15,7 +15,7 @@ import { ensureAgentWorkspace } from "../../agents/workspace.js";
 import { normalizeThinkLevel, resolveThinkingProfile } from "../../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js";
-import { resolveSessionFilePath, resolveStorePath } from "../../config/sessions/paths.js";
+import { resolveStorePath } from "../../config/sessions/paths.js";
 import {
   listSessionEntries as listAccessorSessionEntries,
   loadSessionEntry,
@@ -25,12 +25,7 @@ import {
   updateSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../../config/sessions/store-maintenance.js";
-import {
-  loadSessionStore,
-  saveSessionStore,
-  updateSessionStore,
-  type ResolvedSessionMaintenanceConfigInput,
-} from "../../config/sessions/store.js";
+import type { ResolvedSessionMaintenanceConfigInput } from "../../config/sessions/store.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { createLazyRuntimeMethod, createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
@@ -267,11 +262,7 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
     patchSessionEntry,
     upsertSessionEntry,
     runWithWorkAdmission: runWithSessionWorkAdmission,
-    loadSessionStore,
-    saveSessionStore,
-    updateSessionStore,
     updateSessionStoreEntry,
-    resolveSessionFilePath,
   }));
 
   return agentRuntime as PluginRuntime["agent"];

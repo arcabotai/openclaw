@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION } from "openclaw/plugin-sdk/agent-sessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine } from "../../context-engine/types.js";
@@ -74,6 +75,20 @@ async function writeSessionFile(params: { sessionFile: string; sessionId: string
   );
 }
 
+async function persistSessionEntry(params: {
+  sessionKey: string;
+  storePath: string;
+  entry: SessionEntry;
+}) {
+  await replaceSessionEntry(
+    {
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+    },
+    params.entry,
+  );
+}
+
 describe("runCliTurnCompactionLifecycle", () => {
   let tmpDir: string;
 
@@ -114,7 +129,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       claudeCliSessionId: "claude-session",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
@@ -163,7 +178,7 @@ describe("runCliTurnCompactionLifecycle", () => {
     const compactCall = compactCalls[0];
     expect(compactCall?.sessionId).toBe(sessionId);
     expect(compactCall?.sessionKey).toBe(sessionKey);
-    expect(compactCall?.sessionFile).toBe(sessionFile);
+    expect(compactCall?.sessionTarget).toEqual({ sessionId, sessionKey, storePath });
     expect(compactCall?.tokenBudget).toBe(1_000);
     expect(compactCall?.currentTokenCount).toBe(950);
     expect(compactCall?.force).toBe(true);
@@ -195,6 +210,103 @@ describe("runCliTurnCompactionLifecycle", () => {
     expect(updatedEntry?.claudeCliSessionId).toBeUndefined();
   });
 
+  it("records context-engine compaction successor session targets", async () => {
+    const sessionKey = "agent:main:cli-rotates";
+    const sessionId = "session-cli-rotates";
+    const successorSessionId = "session-cli-rotated";
+    const sessionFile = path.join(tmpDir, "session-rotates.jsonl");
+    const storePath = path.join(tmpDir, "sessions-rotates.json");
+    await writeSessionFile({ sessionFile, sessionId });
+
+    const sessionEntry: SessionEntry = {
+      sessionId,
+      updatedAt: Date.now(),
+      sessionFile,
+      contextTokens: 1_000,
+      totalTokens: 950,
+      totalTokensFresh: true,
+    };
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
+
+    const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
+    const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
+    const recordCliCompactionInStore = vi.fn(async () => ({
+      ...sessionEntry,
+      sessionId: successorSessionId,
+      sessionFile: `sqlite:main:${successorSessionId}:${storePath}`,
+      compactionCount: 1,
+    }));
+    setCliCompactionTestDeps({
+      resolveContextEngine: async () => ({
+        ...buildContextEngine({ compactCalls }),
+        async compact(compactParams) {
+          compactCalls.push(compactParams);
+          return {
+            ok: true,
+            compacted: true,
+            result: {
+              summary: "compacted",
+              tokensBefore: compactParams.currentTokenCount ?? 0,
+              tokensAfter: 100,
+              sessionId: successorSessionId,
+              sessionTarget: {
+                sessionKey,
+                storePath,
+              },
+            },
+          };
+        },
+      }),
+      createPreparedEmbeddedAgentSettingsManager: async () => ({
+        getCompactionReserveTokens: () => 200,
+        getCompactionKeepRecentTokens: () => 0,
+        applyOverrides: () => {},
+      }),
+      shouldPreemptivelyCompactBeforePrompt: () => ({
+        route: "fits",
+        shouldCompact: false,
+        estimatedPromptTokens: 600,
+        promptBudgetBeforeReserve: 800,
+        overflowTokens: 0,
+        toolResultReducibleChars: 0,
+        effectiveReserveTokens: 200,
+      }),
+      resolveLiveToolResultMaxChars: () => 20_000,
+      runContextEngineMaintenance: maintenance,
+      recordCliCompactionInStore,
+    });
+
+    await runCliTurnCompactionLifecycle({
+      cfg: {} as OpenClawConfig,
+      sessionId,
+      sessionKey,
+      sessionEntry,
+      sessionStore,
+      storePath,
+      sessionAgentId: "main",
+      workspaceDir: tmpDir,
+      agentDir: tmpDir,
+      provider: "claude-cli",
+      model: "opus",
+    });
+
+    expect(compactCalls[0]?.sessionTarget).toEqual({ sessionId, sessionKey, storePath });
+    expect(maintenance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: successorSessionId,
+        sessionFile: `sqlite:main:${successorSessionId}:${storePath}`,
+      }),
+    );
+    expect(recordCliCompactionInStore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newSessionFile: `sqlite:main:${successorSessionId}:${storePath}`,
+        newSessionId: successorSessionId,
+        tokensAfter: 100,
+      }),
+    );
+  });
+
   it("treats below-target CLI transcript compaction as a no-op", async () => {
     const sessionKey = "agent:main:cli-under-target";
     const sessionId = "session-cli-under-target";
@@ -214,7 +326,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       },
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
@@ -360,7 +472,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       authProfileOverrideSource: "auto",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const contextEngine = buildContextEngine({ compactCalls });
@@ -482,7 +594,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "copilot",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const compactAgentHarnessSession = vi.fn(async () => ({
@@ -550,7 +662,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const compactAgentHarnessSession = vi.fn();
@@ -614,7 +726,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const ensureSelectedAgentHarnessPlugin = vi.fn(async () => undefined);
@@ -686,7 +798,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
@@ -751,7 +863,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect.objectContaining({
         provider: "codex",
         sessionKey,
-        tokensAfter: undefined,
+        tokensAfter: 100,
       }),
     );
     expect(result?.compactionCount).toBe(1);
@@ -774,7 +886,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     setCliCompactionTestDeps({
@@ -835,7 +947,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const contextEngine = {
@@ -936,7 +1048,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "external-harness",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const ensureSelectedAgentHarnessPlugin = vi.fn(async () => undefined);
@@ -995,7 +1107,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect.objectContaining({
         provider: "external-harness",
         sessionKey,
-        tokensAfter: undefined,
+        tokensAfter: 100,
       }),
     );
     expect(updatedEntry?.compactionCount).toBe(1);
@@ -1020,7 +1132,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       authProfileOverrideSource: "auto",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const ensureSelectedAgentHarnessPlugin = vi.fn(async () => undefined);
@@ -1084,7 +1196,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect.objectContaining({
         provider: "codex",
         sessionKey,
-        tokensAfter: undefined,
+        tokensAfter: 100,
       }),
     );
     expect(updatedEntry?.compactionCount).toBe(1);
@@ -1113,7 +1225,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       },
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const compactAgentHarnessSession = vi.fn(async () => ({
@@ -1201,7 +1313,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const compactAgentHarnessSession = vi.fn(async () => ({
@@ -1258,7 +1370,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect.objectContaining({
         provider: "codex",
         sessionKey,
-        tokensAfter: undefined,
+        tokensAfter: 100,
       }),
     );
     expect(updatedEntry?.compactionCount).toBe(1);
@@ -1281,7 +1393,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => {
@@ -1419,7 +1531,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       claudeCliSessionId: "claude-session",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
@@ -1499,7 +1611,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       totalTokensFresh: true,
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const compactAgentHarnessSession = vi.fn();
@@ -1567,7 +1679,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       totalTokensFresh: true,
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const maintenance = vi.fn(async () => ({ changed: false, bytesFreed: 0, rewrittenEntries: 0 }));
@@ -1630,7 +1742,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       agentHarnessId: "codex",
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
 
     const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
     const contextEngine = buildContextEngine({ compactCalls });

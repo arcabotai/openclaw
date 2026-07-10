@@ -489,7 +489,13 @@ export async function getReplyFromConfig(
         initSessionState({
           ctx: finalized,
           cfg,
+          ...(internalResolvedOpts?.abortSignal
+            ? { abortSignal: internalResolvedOpts.abortSignal }
+            : {}),
           commandAuthorized,
+          ...(internalResolvedOpts?.expectedExistingSessionId
+            ? { expectedExistingSessionId: internalResolvedOpts.expectedExistingSessionId }
+            : {}),
           requestedSessionId: internalResolvedOpts?.requestedSessionId,
           resumeRequestedSession: internalResolvedOpts?.resumeRequestedSession,
           signal: internalResolvedOpts?.abortSignal,
@@ -856,6 +862,7 @@ export async function getReplyFromConfig(
       cfg,
       command,
       sessionKey,
+      storePath,
       sessionEntry,
       previousSessionEntry,
       workspaceDir,

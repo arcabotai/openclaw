@@ -55,7 +55,6 @@ describe("native Codex thread tool", () => {
         session: {
           getSessionEntry: () => ({ sessionId: "session-id", sessionFile, updatedAt: Date.now() }),
           resolveStorePath: () => path.join(root, "sessions", "sessions.json"),
-          resolveSessionFilePath: () => sessionFile,
         },
       },
     });

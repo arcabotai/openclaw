@@ -6,6 +6,7 @@ import os from "node:os";
 import { isAcpRuntimeSpawnAvailable } from "../../acp/runtime/availability.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
+import { parseSqliteSessionFileMarker } from "../../config/sessions/sqlite-marker.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   createFileBackedCompactionCheckpointStore,
@@ -774,11 +775,14 @@ async function compactEmbeddedAgentSessionDirectOnce(
   }
   const effectiveCwd = sandbox?.enabled ? effectiveWorkspace : (requestedCwd ?? effectiveWorkspace);
   await fs.mkdir(effectiveWorkspace, { recursive: true });
-  await ensureSessionHeader({
-    sessionFile: params.sessionFile,
-    sessionId: params.sessionId,
-    cwd: effectiveCwd,
-  });
+  const isSqliteSessionTranscript = Boolean(parseSqliteSessionFileMarker(params.sessionFile));
+  if (!isSqliteSessionTranscript) {
+    await ensureSessionHeader({
+      sessionFile: params.sessionFile,
+      sessionId: params.sessionId,
+      cwd: effectiveCwd,
+    });
+  }
   const { sessionAgentId: effectiveSkillAgentId } = earlyAgentIds;
 
   let restoreSkillEnv: (() => void) | undefined;
@@ -1252,12 +1256,14 @@ async function compactEmbeddedAgentSessionDirectOnce(
       }),
     });
     try {
-      await repairSessionFileIfNeeded({
-        sessionFile: params.sessionFile,
-        debug: (message) => log.debug(message),
-        warn: (message) => log.warn(message),
-      });
-      await prewarmSessionFile(params.sessionFile);
+      if (!isSqliteSessionTranscript) {
+        await repairSessionFileIfNeeded({
+          sessionFile: params.sessionFile,
+          debug: (message) => log.debug(message),
+          warn: (message) => log.warn(message),
+        });
+        await prewarmSessionFile(params.sessionFile);
+      }
       const transcriptPolicy = runtimePlan.transcript.resolvePolicy(runtimePlanModelContext);
       const sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
         agentId: sessionAgentId,
@@ -1561,7 +1567,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
           let transcriptRotationSessionManager: Parameters<
             typeof rotateTranscriptAfterCompaction
           >[0]["sessionManager"] = sessionManager;
-          if (params.trigger === "manual") {
+          if (params.trigger === "manual" && !isSqliteSessionTranscript) {
             try {
               const hardenedBoundary = await hardenManualCompactionBoundary({
                 sessionFile: params.sessionFile,
@@ -1593,7 +1599,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
           const messageCountAfter = session.messages.length;
           const compactedCount = Math.max(0, messageCountCompactionInput - messageCountAfter);
           let transcriptRotation: CompactionTranscriptRotation = { rotated: false };
-          if (shouldRotateCompactionTranscript(params.config)) {
+          if (shouldRotateCompactionTranscript(params.config) && !isSqliteSessionTranscript) {
             try {
               transcriptRotation = await rotateTranscriptAfterCompaction({
                 sessionManager: transcriptRotationSessionManager,
@@ -1618,6 +1624,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
           await runPostCompactionSideEffects({
             config: params.config,
             sessionKey: params.sessionKey,
+            sessionId: activeSessionId,
             agentId: sessionAgentId,
             sessionFile: activeSessionFile,
           });

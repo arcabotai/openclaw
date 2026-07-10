@@ -79,6 +79,26 @@ public enum ApprovalAllowDecision: String, Codable, Sendable {
     case allowAlways = "allow-always"
 }
 
+public enum ApprovalAllowedReason: String, Codable, Sendable {
+    case user = "user"
+}
+
+public enum ApprovalDeniedReason: String, Codable, Sendable {
+    case user = "user"
+    case malformedVerdict = "malformed-verdict"
+    case noRoute = "no-route"
+    case storageCorrupt = "storage-corrupt"
+}
+
+public enum ApprovalExpiredReason: String, Codable, Sendable {
+    case timeout = "timeout"
+}
+
+public enum ApprovalCancelledReason: String, Codable, Sendable {
+    case runAborted = "run-aborted"
+    case gatewayRestart = "gateway-restart"
+}
+
 public enum PluginApprovalSeverity: String, Codable, Sendable {
     case info = "info"
     case warning = "warning"
@@ -2678,18 +2698,22 @@ public struct SessionsSendParams: Codable, Sendable {
 public struct SessionsMessagesSubscribeParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
+    public let includeapprovals: Bool?
 
     public init(
         key: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        includeapprovals: Bool? = nil)
     {
         self.key = key
         self.agentid = agentid
+        self.includeapprovals = includeapprovals
     }
 
     private enum CodingKeys: String, CodingKey {
         case key
         case agentid = "agentId"
+        case includeapprovals = "includeApprovals"
     }
 }
 
@@ -8130,9 +8154,9 @@ public struct AllowedApprovalSnapshot: Codable, Sendable {
     public let expiresatms: Int
     public let presentation: ApprovalPresentation
     public let resolvedatms: Int
-    public let reason: ApprovalTerminalReason
     public let status: String
     public let decision: ApprovalAllowDecision
+    public let reason: ApprovalAllowedReason
 
     public init(
         id: String,
@@ -8141,9 +8165,9 @@ public struct AllowedApprovalSnapshot: Codable, Sendable {
         expiresatms: Int,
         presentation: ApprovalPresentation,
         resolvedatms: Int,
-        reason: ApprovalTerminalReason,
         status: String,
-        decision: ApprovalAllowDecision)
+        decision: ApprovalAllowDecision,
+        reason: ApprovalAllowedReason)
     {
         self.id = id
         self.urlpath = urlpath
@@ -8151,9 +8175,9 @@ public struct AllowedApprovalSnapshot: Codable, Sendable {
         self.expiresatms = expiresatms
         self.presentation = presentation
         self.resolvedatms = resolvedatms
-        self.reason = reason
         self.status = status
         self.decision = decision
+        self.reason = reason
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8163,9 +8187,9 @@ public struct AllowedApprovalSnapshot: Codable, Sendable {
         case expiresatms = "expiresAtMs"
         case presentation
         case resolvedatms = "resolvedAtMs"
-        case reason
         case status
         case decision
+        case reason
     }
 }
 
@@ -8176,9 +8200,9 @@ public struct DeniedApprovalSnapshot: Codable, Sendable {
     public let expiresatms: Int
     public let presentation: ApprovalPresentation
     public let resolvedatms: Int
-    public let reason: ApprovalTerminalReason
     public let status: String
     public let decision: String
+    public let reason: ApprovalDeniedReason
 
     public init(
         id: String,
@@ -8187,9 +8211,9 @@ public struct DeniedApprovalSnapshot: Codable, Sendable {
         expiresatms: Int,
         presentation: ApprovalPresentation,
         resolvedatms: Int,
-        reason: ApprovalTerminalReason,
         status: String,
-        decision: String)
+        decision: String,
+        reason: ApprovalDeniedReason)
     {
         self.id = id
         self.urlpath = urlpath
@@ -8197,9 +8221,9 @@ public struct DeniedApprovalSnapshot: Codable, Sendable {
         self.expiresatms = expiresatms
         self.presentation = presentation
         self.resolvedatms = resolvedatms
-        self.reason = reason
         self.status = status
         self.decision = decision
+        self.reason = reason
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8209,9 +8233,9 @@ public struct DeniedApprovalSnapshot: Codable, Sendable {
         case expiresatms = "expiresAtMs"
         case presentation
         case resolvedatms = "resolvedAtMs"
-        case reason
         case status
         case decision
+        case reason
     }
 }
 
@@ -8222,8 +8246,8 @@ public struct ExpiredApprovalSnapshot: Codable, Sendable {
     public let expiresatms: Int
     public let presentation: ApprovalPresentation
     public let resolvedatms: Int
-    public let reason: ApprovalTerminalReason
     public let status: String
+    public let reason: ApprovalExpiredReason
 
     public init(
         id: String,
@@ -8232,8 +8256,8 @@ public struct ExpiredApprovalSnapshot: Codable, Sendable {
         expiresatms: Int,
         presentation: ApprovalPresentation,
         resolvedatms: Int,
-        reason: ApprovalTerminalReason,
-        status: String)
+        status: String,
+        reason: ApprovalExpiredReason)
     {
         self.id = id
         self.urlpath = urlpath
@@ -8241,8 +8265,8 @@ public struct ExpiredApprovalSnapshot: Codable, Sendable {
         self.expiresatms = expiresatms
         self.presentation = presentation
         self.resolvedatms = resolvedatms
-        self.reason = reason
         self.status = status
+        self.reason = reason
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8252,8 +8276,8 @@ public struct ExpiredApprovalSnapshot: Codable, Sendable {
         case expiresatms = "expiresAtMs"
         case presentation
         case resolvedatms = "resolvedAtMs"
-        case reason
         case status
+        case reason
     }
 }
 
@@ -8264,8 +8288,8 @@ public struct CancelledApprovalSnapshot: Codable, Sendable {
     public let expiresatms: Int
     public let presentation: ApprovalPresentation
     public let resolvedatms: Int
-    public let reason: ApprovalTerminalReason
     public let status: String
+    public let reason: ApprovalCancelledReason
 
     public init(
         id: String,
@@ -8274,8 +8298,8 @@ public struct CancelledApprovalSnapshot: Codable, Sendable {
         expiresatms: Int,
         presentation: ApprovalPresentation,
         resolvedatms: Int,
-        reason: ApprovalTerminalReason,
-        status: String)
+        status: String,
+        reason: ApprovalCancelledReason)
     {
         self.id = id
         self.urlpath = urlpath
@@ -8283,8 +8307,8 @@ public struct CancelledApprovalSnapshot: Codable, Sendable {
         self.expiresatms = expiresatms
         self.presentation = presentation
         self.resolvedatms = resolvedatms
-        self.reason = reason
         self.status = status
+        self.reason = reason
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8294,8 +8318,8 @@ public struct CancelledApprovalSnapshot: Codable, Sendable {
         case expiresatms = "expiresAtMs"
         case presentation
         case resolvedatms = "resolvedAtMs"
-        case reason
         case status
+        case reason
     }
 }
 
@@ -8364,6 +8388,92 @@ public struct ApprovalResolveResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case applied
         case approval
+    }
+}
+
+public struct PendingSessionApprovalEvent: Codable, Sendable {
+    public let sessionkey: String
+    public let sourcesessionkey: String?
+    public let updatedatms: Int
+    public let phase: String
+    public let approval: PendingApprovalSnapshot
+
+    public init(
+        sessionkey: String,
+        sourcesessionkey: String?,
+        updatedatms: Int,
+        phase: String,
+        approval: PendingApprovalSnapshot)
+    {
+        self.sessionkey = sessionkey
+        self.sourcesessionkey = sourcesessionkey
+        self.updatedatms = updatedatms
+        self.phase = phase
+        self.approval = approval
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case sourcesessionkey = "sourceSessionKey"
+        case updatedatms = "updatedAtMs"
+        case phase
+        case approval
+    }
+}
+
+public struct TerminalSessionApprovalEvent: Codable, Sendable {
+    public let sessionkey: String
+    public let sourcesessionkey: String?
+    public let updatedatms: Int
+    public let phase: String
+    public let approval: TerminalApprovalSnapshot
+
+    public init(
+        sessionkey: String,
+        sourcesessionkey: String?,
+        updatedatms: Int,
+        phase: String,
+        approval: TerminalApprovalSnapshot)
+    {
+        self.sessionkey = sessionkey
+        self.sourcesessionkey = sourcesessionkey
+        self.updatedatms = updatedatms
+        self.phase = phase
+        self.approval = approval
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case sourcesessionkey = "sourceSessionKey"
+        case updatedatms = "updatedAtMs"
+        case phase
+        case approval
+    }
+}
+
+public struct SessionApprovalReplay: Codable, Sendable {
+    public let sessionkey: String
+    public let updatedatms: Int
+    public let approvals: [PendingApprovalSnapshot]
+    public let truncated: Bool
+
+    public init(
+        sessionkey: String,
+        updatedatms: Int,
+        approvals: [PendingApprovalSnapshot],
+        truncated: Bool)
+    {
+        self.sessionkey = sessionkey
+        self.updatedatms = updatedatms
+        self.approvals = approvals
+        self.truncated = truncated
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case updatedatms = "updatedAtMs"
+        case approvals
+        case truncated
     }
 }
 
@@ -9834,6 +9944,37 @@ public enum TerminalApprovalSnapshot: Codable, Sendable {
         case .denied(let value): try value.encode(to: encoder)
         case .expired(let value): try value.encode(to: encoder)
         case .cancelled(let value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public enum SessionApprovalEvent: Codable, Sendable {
+    case pending(PendingSessionApprovalEvent)
+    case terminal(TerminalSessionApprovalEvent)
+
+    private enum CodingKeys: String, CodingKey {
+        case discriminator = "phase"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let discriminator = try container.decode(String.self, forKey: .discriminator)
+        switch discriminator {
+        case "pending": self = try .pending(PendingSessionApprovalEvent(from: decoder))
+        case "terminal": self = try .terminal(TerminalSessionApprovalEvent(from: decoder))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .discriminator,
+                in: container,
+                debugDescription: "Unknown SessionApprovalEvent discriminator value"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .pending(let value): try value.encode(to: encoder)
+        case .terminal(let value): try value.encode(to: encoder)
         }
     }
 }

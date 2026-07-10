@@ -38,6 +38,26 @@ export const ApprovalTerminalReasonSchema = Type.Union([
   Type.Literal("storage-corrupt"),
 ]);
 
+/** Terminal reason accepted for an allowed approval. */
+export const ApprovalAllowedReasonSchema = Type.Union([Type.Literal("user")]);
+
+/** Terminal reasons accepted for a denied approval. */
+export const ApprovalDeniedReasonSchema = Type.Union([
+  Type.Literal("user"),
+  Type.Literal("malformed-verdict"),
+  Type.Literal("no-route"),
+  Type.Literal("storage-corrupt"),
+]);
+
+/** Terminal reason accepted for an expired approval. */
+export const ApprovalExpiredReasonSchema = Type.Union([Type.Literal("timeout")]);
+
+/** Terminal reasons accepted for a cancelled approval. */
+export const ApprovalCancelledReasonSchema = Type.Union([
+  Type.Literal("run-aborted"),
+  Type.Literal("gateway-restart"),
+]);
+
 /** Reviewer-facing severity for plugin-owned approval requests. */
 export const PluginApprovalSeveritySchema = Type.Union([
   Type.Literal("info"),
@@ -119,7 +139,7 @@ export const AllowedApprovalSnapshotSchema = Type.Object(
     ...ApprovalResolutionFields,
     status: Type.Literal("allowed"),
     decision: ApprovalAllowDecisionSchema,
-    reason: Type.Literal("user"),
+    reason: ApprovalAllowedReasonSchema,
   },
   { additionalProperties: false },
 );
@@ -131,12 +151,7 @@ export const DeniedApprovalSnapshotSchema = Type.Object(
     ...ApprovalResolutionFields,
     status: Type.Literal("denied"),
     decision: Type.Literal("deny"),
-    reason: Type.Union([
-      Type.Literal("user"),
-      Type.Literal("malformed-verdict"),
-      Type.Literal("no-route"),
-      Type.Literal("storage-corrupt"),
-    ]),
+    reason: ApprovalDeniedReasonSchema,
   },
   { additionalProperties: false },
 );
@@ -147,7 +162,7 @@ export const ExpiredApprovalSnapshotSchema = Type.Object(
     ...ApprovalRecordCommonFields,
     ...ApprovalResolutionFields,
     status: Type.Literal("expired"),
-    reason: Type.Literal("timeout"),
+    reason: ApprovalExpiredReasonSchema,
   },
   { additionalProperties: false },
 );
@@ -158,7 +173,7 @@ export const CancelledApprovalSnapshotSchema = Type.Object(
     ...ApprovalRecordCommonFields,
     ...ApprovalResolutionFields,
     status: Type.Literal("cancelled"),
-    reason: Type.Union([Type.Literal("run-aborted"), Type.Literal("gateway-restart")]),
+    reason: ApprovalCancelledReasonSchema,
   },
   { additionalProperties: false },
 );
@@ -217,24 +232,30 @@ const SessionApprovalEventCommonFields = {
   updatedAtMs: Type.Integer({ minimum: 0 }),
 };
 
+/** Sanitized pending transition delivered only to an opted-in session audience. */
+export const PendingSessionApprovalEventSchema = Type.Object(
+  {
+    ...SessionApprovalEventCommonFields,
+    phase: Type.Literal("pending"),
+    approval: PendingApprovalSnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+
+/** Sanitized terminal transition delivered only to an opted-in session audience. */
+export const TerminalSessionApprovalEventSchema = Type.Object(
+  {
+    ...SessionApprovalEventCommonFields,
+    phase: Type.Literal("terminal"),
+    approval: TerminalApprovalSnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+
 /** Sanitized approval transition delivered only to an opted-in session audience. */
 export const SessionApprovalEventSchema = Type.Union([
-  Type.Object(
-    {
-      ...SessionApprovalEventCommonFields,
-      phase: Type.Literal("pending"),
-      approval: PendingApprovalSnapshotSchema,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      ...SessionApprovalEventCommonFields,
-      phase: Type.Literal("terminal"),
-      approval: TerminalApprovalSnapshotSchema,
-    },
-    { additionalProperties: false },
-  ),
+  PendingSessionApprovalEventSchema,
+  TerminalSessionApprovalEventSchema,
 ]);
 
 /** Authoritative pending approval set returned when a session stream subscribes. */

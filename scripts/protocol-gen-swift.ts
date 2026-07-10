@@ -50,7 +50,7 @@ const DEFAULTED_OPTIONAL_INIT_PARAM_ENTRIES: readonly [string, readonly string[]
   ["SessionsCompactionBranchParams", ["agentId"]],
   ["SessionsCompactionRestoreParams", ["agentId"]],
   ["SessionsSendParams", ["agentId"]],
-  ["SessionsMessagesSubscribeParams", ["agentId"]],
+  ["SessionsMessagesSubscribeParams", ["agentId", "includeApprovals"]],
   ["SessionsMessagesUnsubscribeParams", ["agentId"]],
   ["SessionsAbortParams", ["agentId"]],
   ["SessionsListParams", ["archived"]],

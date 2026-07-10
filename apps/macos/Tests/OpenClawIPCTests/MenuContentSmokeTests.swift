@@ -10,6 +10,16 @@ struct MenuContentSmokeTests {
         #expect(AppTerminationTiming.cleanupDeadlineSeconds < AppTerminationTiming.signalExitFailsafeSeconds)
     }
 
+    @Test func `signal termination arms failsafe before entering AppKit termination`() {
+        var steps: [String] = []
+
+        TerminationSignalWatcher.requestTermination(
+            armFailsafe: { steps.append("failsafe") },
+            terminateApplication: { steps.append("terminate") })
+
+        #expect(steps == ["failsafe", "terminate"])
+    }
+
     @Test func `menu content builds body local mode`() {
         let state = AppState(preview: true)
         state.connectionMode = .local

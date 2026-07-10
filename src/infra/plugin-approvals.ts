@@ -77,7 +77,7 @@ export function approvalDecisionLabel(decision: ExecApprovalDecision): string {
   return "denied";
 }
 
-/** Resolve explicit plugin approval decisions or fall back to defaults. */
+/** Resolve plugin approval decisions with fail-closed deny, or fall back to defaults. */
 export function resolvePluginApprovalRequestAllowedDecisions(params?: {
   allowedDecisions?: readonly ExecApprovalDecision[] | readonly string[] | null;
 }): readonly ExecApprovalDecision[] {
@@ -92,7 +92,15 @@ export function resolvePluginApprovalRequestAllowedDecisions(params?: {
       }
     }
   }
-  return explicit.length > 0 ? explicit : DEFAULT_PLUGIN_APPROVAL_DECISIONS;
+  if (explicit.length === 0) {
+    return DEFAULT_PLUGIN_APPROVAL_DECISIONS;
+  }
+  // Denial is always available as the fail-closed verdict. This shared list
+  // feeds both the canonical manager and every channel-facing action model.
+  if (!explicit.includes("deny")) {
+    explicit.push("deny");
+  }
+  return explicit;
 }
 
 /** Build the pending plugin approval message. */

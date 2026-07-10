@@ -1882,6 +1882,9 @@ describe("message tool schema scoping", () => {
       expect(properties).toHaveProperty("presentation");
       expect(presentationSchemaJson).toContain('"action"');
       expect(presentationSchemaJson).toContain('"command"');
+      expect(presentationSchemaJson).toContain('"const":"url"');
+      expect(presentationSchemaJson).toContain('"const":"web-app"');
+      expect(presentationSchemaJson).not.toContain('"const":"approval"');
       expect(presentationSchemaJson).toContain('"chartType"');
       expect(presentationSchemaJson).toContain('"pie"');
       expect(presentationSchemaJson).not.toContain('"maxItems"');
@@ -2978,6 +2981,16 @@ describe("message tool boot-echo guard", () => {
               buttons: [
                 { label: "Status", url: echoedText },
                 { label: "App", webApp: { url: echoedText }, web_app: { url: echoedText } },
+                {
+                  label: "Typed status",
+                  action: { type: "url", url: echoedText },
+                  value: "must-not-become-active",
+                },
+                {
+                  label: "Typed app",
+                  action: { type: "web-app", url: echoedText },
+                  url: "https://legacy.example.test",
+                },
               ],
             },
           ],
@@ -2991,7 +3004,12 @@ describe("message tool boot-echo guard", () => {
       blocks: [
         {
           type: "buttons",
-          buttons: [{ label: "Status" }, { label: "App" }],
+          buttons: [
+            { label: "Status" },
+            { label: "App" },
+            { label: "Typed status" },
+            { label: "Typed app" },
+          ],
         },
       ],
     });

@@ -255,11 +255,11 @@ describe("operator approval gateway client e2e", () => {
       presentation: { kind: "exec" },
     });
 
+    await expect(underscoped.request("approval.get", { id: approvalId })).rejects.toThrow(
+      "missing scope: operator.approvals",
+    );
     await expect(
-      underscoped.request("approval.get", { id: approvalId }),
-    ).rejects.toThrow("missing scope: operator.approvals");
-    await expect(
-      underscoped.request("approval.resolve", { id: approvalId, decision: "deny" }),
+      underscoped.request("approval.resolve", { id: approvalId, kind: "exec", decision: "deny" }),
     ).rejects.toThrow("missing scope: operator.approvals");
 
     const stillPending = await reviewer.request<ApprovalGetResult>("approval.get", {
@@ -271,10 +271,12 @@ describe("operator approval gateway client e2e", () => {
     const [allowResult, denyResult] = await Promise.all([
       requester.request<ApprovalResolveResult>("approval.resolve", {
         id: approvalId,
+        kind: "exec",
         decision: "allow-once",
       }),
       reviewer.request<ApprovalResolveResult>("approval.resolve", {
         id: approvalId,
+        kind: "exec",
         decision: "deny",
       }),
     ]);
@@ -283,8 +285,7 @@ describe("operator approval gateway client e2e", () => {
     expect([allowResult.applied, denyResult.applied].filter(Boolean)).toHaveLength(1);
     expect(allowResult.approval).toEqual(denyResult.approval);
 
-    const winningDecision =
-      allowResult.approval.status === "allowed" ? "allow-once" : "deny";
+    const winningDecision = allowResult.approval.status === "allowed" ? "allow-once" : "deny";
     expect(allowResult.approval).toMatchObject({
       id: approvalId,
       status: winningDecision === "deny" ? "denied" : "allowed",
@@ -293,6 +294,7 @@ describe("operator approval gateway client e2e", () => {
 
     const replay = await reviewer.request<ApprovalResolveResult>("approval.resolve", {
       id: approvalId,
+      kind: "exec",
       decision: winningDecision,
     });
     expect(validateApprovalResolveResult(replay)).toBe(true);

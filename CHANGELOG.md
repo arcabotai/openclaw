@@ -23,6 +23,7 @@ Docs: https://docs.openclaw.ai
 - **Android chat code highlighting:** render fenced Kotlin, Swift, TypeScript, JavaScript, Python, Bash, and JSON blocks with bounded, theme-aware syntax colors while preserving plain rendering for unknown, partial, or oversized blocks. (#100217)
 - **Gateway TTS playback:** add an operator-scoped `tts.speak` RPC that returns configured-provider speech as inline whole-clip audio for remote clients. (#100708, #100770)
 - **Durable operator approvals:** persist Gateway exec and plugin approval lifecycles in shared SQLite, expose kind-agnostic lookup and first-answer-wins resolution for authorized surfaces, and retain safe terminal audit state across reconnects and restarts. (#103505)
+- **Multi-surface approval actions:** carry typed approval, link, and Web App actions through the plugin SDK and bundled channels, keep callbacks transport-private with explicit owner kinds and durable compact locators, and show canonical first-answer outcomes on clicks and supported native terminal updates. (#103505)
 
 ### Fixes
 

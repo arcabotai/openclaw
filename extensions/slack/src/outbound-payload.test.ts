@@ -186,7 +186,7 @@ describe("slackOutbound sendPayload", () => {
     expect(rendered?.text).toBe("Actions\n\nChoose an action\n\n- Status: `/status`");
   });
 
-  it("renders web-app buttons as native Slack links", async () => {
+  it("renders typed URL and web-app buttons as native Slack links", async () => {
     const payload: ReplyPayload = {
       presentation: {
         blocks: [
@@ -195,9 +195,9 @@ describe("slackOutbound sendPayload", () => {
             buttons: [
               {
                 label: "Launch",
-                value: "approve",
-                webApp: { url: "https://example.com/app" },
+                action: { type: "web-app", url: "https://example.com/app" },
               },
+              { label: "View", action: { type: "url", url: "https://example.com/view" } },
             ],
           },
         ],
@@ -219,6 +219,11 @@ describe("slackOutbound sendPayload", () => {
               type: "button",
               action_id: "openclaw:reply_link:1:1",
               url: "https://example.com/app",
+            }),
+            expect.objectContaining({
+              type: "button",
+              action_id: "openclaw:reply_link:1:2",
+              url: "https://example.com/view",
             }),
           ],
         }),

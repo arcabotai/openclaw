@@ -48,6 +48,8 @@ export {
   renderMessagePresentationChartFallbackText,
   renderMessagePresentationFallbackText,
   resolveMessagePresentationActionValue,
+  resolveMessagePresentationButtonAction,
   resolveMessagePresentationControlValue,
+  resolveMessagePresentationOptionAction,
   resolveInteractiveTextFallback,
 } from "../interactive/payload.js";

@@ -79,6 +79,21 @@ public actor GatewayNodeSession {
         var operationSettled: Bool
     }
 
+    private struct ConnectOptionsKey: Equatable {
+        let normalizedInputs: String
+        let deviceAuthGatewayIDBytes: [UInt8]?
+    }
+
+    private struct ComputerInvokeReceiptKey: Hashable {
+        let receiptScopeBytes: [UInt8]
+        let idempotencyKeyBytes: [UInt8]
+
+        init(receiptScope: String, idempotencyKey: String) {
+            self.receiptScopeBytes = Array(receiptScope.utf8)
+            self.idempotencyKeyBytes = Array(idempotencyKey.utf8)
+        }
+    }
+
     private struct ActiveInvoke {
         let admissionGeneration: UInt64
         let task: Task<BridgeInvokeResponse, Never>
@@ -100,7 +115,7 @@ public actor GatewayNodeSession {
     private var activeToken: String?
     private var activeBootstrapToken: String?
     private var activePassword: String?
-    private var activeConnectOptionsKey: String?
+    private var activeConnectOptionsKey: ConnectOptionsKey?
     private var activeSessionIdentity: ObjectIdentifier?
     private var channelGeneration: UInt64 = 0
     private var admissionGeneration: UInt64 = 0
@@ -120,14 +135,15 @@ public actor GatewayNodeSession {
     private var hasEverConnected = false
     private var hasNotifiedConnected = false
     private var snapshotReceived = false
+    private var serverMethods: Set<String>?
     private var serverCapabilities: Set<GatewayServerCapability>?
     private var snapshotWaiters: [CheckedContinuation<Bool, Never>] = []
     // `computer.act` is not safe to repeat after a response is lost. Keep recent
     // in-flight/results on the long-lived node session so a channel reconnect can
     // replay the receipt without posting input twice. App restart intentionally
     // remains a wider durable-storage boundary.
-    private var computerInvokeReceipts: [String: ComputerInvokeReceipt] = [:]
-    private var computerInvokeReceiptOrder: [String] = []
+    private var computerInvokeReceipts: [ComputerInvokeReceiptKey: ComputerInvokeReceipt] = [:]
+    private var computerInvokeReceiptOrder: [ComputerInvokeReceiptKey] = []
     #if DEBUG
     private var computerInvokeReceiptJoinCounts: [UUID: Int] = [:]
     #endif
@@ -223,7 +239,7 @@ public actor GatewayNodeSession {
 
     public init() {}
 
-    private func connectOptionsKey(_ options: GatewayConnectOptions) -> String {
+    private func connectOptionsKey(_ options: GatewayConnectOptions) -> ConnectOptionsKey {
         func sorted(_ values: [String]) -> String {
             values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -240,8 +256,6 @@ public actor GatewayNodeSession {
         let deviceIdentityProfile = options.deviceIdentityProfile.rawValue
         let includeDeviceIdentity = options.includeDeviceIdentity ? "1" : "0"
         let allowStoredDeviceAuth = options.allowStoredDeviceAuth ? "1" : "0"
-        let deviceAuthGatewayID = options.deviceAuthGatewayID?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let permissions = options.permissions
             .map { key, value in
                 let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -250,7 +264,7 @@ public actor GatewayNodeSession {
             .sorted()
             .joined(separator: ",")
 
-        return [
+        let normalizedInputs = [
             role,
             scopes,
             caps,
@@ -261,9 +275,11 @@ public actor GatewayNodeSession {
             deviceIdentityProfile,
             includeDeviceIdentity,
             allowStoredDeviceAuth,
-            deviceAuthGatewayID,
             permissions,
         ].joined(separator: "|")
+        return ConnectOptionsKey(
+            normalizedInputs: normalizedInputs,
+            deviceAuthGatewayIDBytes: options.deviceAuthGatewayID.map { Array($0.utf8) })
     }
 
     public func connect(
@@ -546,10 +562,10 @@ public actor GatewayNodeSession {
     public func currentRoute(ifGatewayID expectedGatewayID: String? = nil) -> GatewayNodeSessionRoute? {
         guard self.channel != nil else { return nil }
         if let expectedGatewayID {
-            let expected = expectedGatewayID.trimmingCharacters(in: .whitespacesAndNewlines)
-            let current = self.connectOptions?.deviceAuthGatewayID?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !expected.isEmpty, current == expected else { return nil }
+            guard !expectedGatewayID.isEmpty,
+                  let currentGatewayID = self.connectOptions?.deviceAuthGatewayID,
+                  currentGatewayID.utf8.elementsEqual(expectedGatewayID.utf8)
+            else { return nil }
         }
         return GatewayNodeSessionRoute(
             channelGeneration: self.channelGeneration,
@@ -565,6 +581,17 @@ public actor GatewayNodeSession {
               let serverCapabilities
         else { return nil }
         return serverCapabilities.contains(capability)
+    }
+
+    public func supportsServerMethod(
+        _ method: String,
+        ifCurrentRoute expectedRoute: GatewayNodeSessionRoute) -> Bool?
+    {
+        guard self.isCurrentRoute(expectedRoute),
+              self.channel != nil,
+              let serverMethods
+        else { return nil }
+        return serverMethods.contains(method)
     }
 
     @discardableResult
@@ -650,6 +677,7 @@ public actor GatewayNodeSession {
         case let .snapshot(ok):
             let admissionGeneration = self.admissionGeneration
             self.pluginSurfaceUrls = self.normalizePluginSurfaceUrls(ok.pluginsurfaceurls)
+            self.serverMethods = ok.advertisedServerMethods()
             self.serverCapabilities = Set(
                 GatewayServerCapability.allCases.filter { ok.supportsServerCapability($0) })
             if self.hasEverConnected {
@@ -676,6 +704,7 @@ public actor GatewayNodeSession {
     private func resetConnectionState() {
         self.hasNotifiedConnected = false
         self.snapshotReceived = false
+        self.serverMethods = nil
         self.serverCapabilities = nil
         self.drainSnapshotWaiters(returning: false)
     }
@@ -753,9 +782,16 @@ public actor GatewayNodeSession {
     }
 
     private func notifyConnectedIfNeeded(admissionGeneration: UInt64) async {
-        guard admissionGeneration == self.admissionGeneration,
-              !self.hasNotifiedConnected
-        else { return }
+        guard admissionGeneration == self.admissionGeneration else { return }
+        if self.hasNotifiedConnected {
+            // The snapshot delivery task can enqueue the callback before connect()
+            // reaches this method. Join that callback so connect never returns early.
+            let lifecycleCallback = self.lifecycleCallbackBarrier
+            if !self.isExecutingLifecycleCallback() {
+                await lifecycleCallback?.task.value
+            }
+            return
+        }
         self.hasNotifiedConnected = true
         guard let onConnected = self.onConnected else { return }
         let lifecycleCallback = self.enqueueLifecycleCallback(final: onConnected)
@@ -1036,7 +1072,9 @@ public actor GatewayNodeSession {
                 onInvoke: onInvoke)
         }
 
-        let receiptKey = "\(receiptScope)\u{0}\(idempotencyKey)"
+        let receiptKey = ComputerInvokeReceiptKey(
+            receiptScope: receiptScope,
+            idempotencyKey: idempotencyKey)
         let fingerprint = Self.computerInvokeFingerprint(requestPayload)
         if let receipt = computerInvokeReceipts[receiptKey] {
             guard receipt.fingerprint == fingerprint else {
@@ -1150,16 +1188,18 @@ public actor GatewayNodeSession {
         idempotencyKey: String,
         receiptScope: String) -> Int
     {
-        let receiptKey = "\(receiptScope)\u{0}\(idempotencyKey)"
+        let receiptKey = ComputerInvokeReceiptKey(
+            receiptScope: receiptScope,
+            idempotencyKey: idempotencyKey)
         guard let receiptID = self.computerInvokeReceipts[receiptKey]?.id else { return 0 }
         return self.computerInvokeReceiptJoinCounts[receiptID] ?? 0
     }
     #endif
 
     private func computerInvokeReceiptScope() -> String {
-        let gatewayID = self.connectOptions?.deviceAuthGatewayID?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !gatewayID.isEmpty {
+        if let gatewayID = self.connectOptions?.deviceAuthGatewayID,
+           !gatewayID.isEmpty
+        {
             return "gateway:\(gatewayID)"
         }
         return "url:\(self.activeURL?.absoluteString ?? "unknown")"
@@ -1191,7 +1231,7 @@ public actor GatewayNodeSession {
     }
 
     private func discardRetryableComputerInvokeReceipt(
-        key: String,
+        key: ComputerInvokeReceiptKey,
         receiptID: UUID,
         fingerprint: String,
         response: BridgeInvokeResponse)
@@ -1208,7 +1248,7 @@ public actor GatewayNodeSession {
     }
 
     private func markComputerInvokeOperationSettled(
-        key: String,
+        key: ComputerInvokeReceiptKey,
         receiptID: UUID,
         fingerprint: String)
     {

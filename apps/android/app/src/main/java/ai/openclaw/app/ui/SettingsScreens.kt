@@ -14,6 +14,7 @@ import ai.openclaw.app.GatewayCronJobDetailState
 import ai.openclaw.app.GatewayCronJobEdit
 import ai.openclaw.app.GatewayCronJobSummary
 import ai.openclaw.app.GatewayCronRunHistoryState
+import ai.openclaw.app.GatewayExecApprovalNotice
 import ai.openclaw.app.GatewayExecApprovalSummary
 import ai.openclaw.app.GatewayTalkSetupReadiness
 import ai.openclaw.app.GatewayTalkSetupState
@@ -95,6 +96,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -533,6 +535,7 @@ private fun ApprovalsSettingsScreen(
   val execApprovals by viewModel.execApprovals.collectAsState()
   val execApprovalsRefreshing by viewModel.execApprovalsRefreshing.collectAsState()
   val execApprovalsErrorText by viewModel.execApprovalsErrorText.collectAsState()
+  val execApprovalsNotice by viewModel.execApprovalsNotice.collectAsState()
   val pendingToolCalls by viewModel.chatPendingToolCalls.collectAsState()
   val pendingRunCount by viewModel.pendingRunCount.collectAsState()
   val issueCount = execApprovals.count { it.errorText != null } + pendingToolCalls.count { it.isError == true }
@@ -564,6 +567,9 @@ private fun ApprovalsSettingsScreen(
         Text(text = execApprovalsErrorText ?: "", style = ClawTheme.type.body, color = ClawTheme.colors.warning)
       }
     }
+    execApprovalEmptyInboxNotice(execApprovalsNotice, execApprovals)?.let { notice ->
+      ExecApprovalNotice(notice)
+    }
     if (!isConnected) {
       ClawPanel {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -579,7 +585,11 @@ private fun ApprovalsSettingsScreen(
         }
       }
     } else {
-      ExecApprovalsPanel(approvals = execApprovals, onResolve = viewModel::resolveExecApproval)
+      ExecApprovalsPanel(
+        approvals = execApprovals,
+        notice = execApprovalsNotice,
+        onResolve = viewModel::resolveExecApproval,
+      )
     }
     if (pendingToolCalls.isNotEmpty()) {
       Text(text = "Session activity", style = ClawTheme.type.section, color = ClawTheme.colors.text)
@@ -1899,11 +1909,16 @@ internal data class SettingsMetric(
 @Composable
 private fun ExecApprovalsPanel(
   approvals: List<GatewayExecApprovalSummary>,
+  notice: GatewayExecApprovalNotice?,
   onResolve: (String, String) -> Unit,
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
     approvals.forEach { approval ->
-      ExecApprovalCard(approval = approval, onResolve = onResolve)
+      ExecApprovalCard(
+        approval = approval,
+        notice = execApprovalNoticeForCard(notice, approval.id),
+        onResolve = onResolve,
+      )
     }
   }
 }
@@ -1911,6 +1926,7 @@ private fun ExecApprovalsPanel(
 @Composable
 private fun ExecApprovalCard(
   approval: GatewayExecApprovalSummary,
+  notice: GatewayExecApprovalNotice?,
   onResolve: (String, String) -> Unit,
 ) {
   val resolving = approval.resolvingDecision != null
@@ -1918,44 +1934,97 @@ private fun ExecApprovalCard(
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
       Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-          Text(text = approval.commandText, style = ClawTheme.type.body, color = ClawTheme.colors.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+          Text(text = "Command approval", style = ClawTheme.type.section, color = ClawTheme.colors.text)
           approval.commandPreview?.let { preview ->
             Text(text = preview, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
           }
         }
         ClawStatusPill(text = if (resolving) "Sending" else "Review", status = if (resolving) ClawStatus.Warning else ClawStatus.Success)
       }
+      ExecApprovalCommandReview(approval.commandText)
+      approval.warningText?.let { warningText ->
+        Text(text = warningText, style = ClawTheme.type.body, color = ClawTheme.colors.warning)
+      }
       Text(text = execApprovalMetadata(approval), style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle, maxLines = 2, overflow = TextOverflow.Ellipsis)
       approval.errorText?.let { errorText ->
         Text(text = errorText, style = ClawTheme.type.caption, color = ClawTheme.colors.warning)
       }
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if ("allow-once" in approval.allowedDecisions) {
-          ClawPrimaryButton(
-            text = if (approval.resolvingDecision == "allow-once") "Allowing" else "Allow Once",
-            onClick = { onResolve(approval.id, "allow-once") },
-            enabled = !resolving,
-            modifier = Modifier.weight(1f),
-          )
-        }
-        if ("allow-always" in approval.allowedDecisions) {
-          ClawSecondaryButton(
-            text = if (approval.resolvingDecision == "allow-always") "Saving" else "Always",
-            onClick = { onResolve(approval.id, "allow-always") },
-            enabled = !resolving,
-            modifier = Modifier.weight(1f),
-          )
-        }
-        if ("deny" in approval.allowedDecisions) {
-          ClawSecondaryButton(
-            text = if (approval.resolvingDecision == "deny") "Denying" else "Deny",
-            onClick = { onResolve(approval.id, "deny") },
-            enabled = !resolving,
-            modifier = Modifier.weight(1f),
-          )
+      notice?.let { ExecApprovalNotice(it) }
+      Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        execApprovalActions(approval.allowedDecisions).forEach { action ->
+          if (action.decision == "allow-once") {
+            ClawPrimaryButton(
+              text = action.label,
+              onClick = { onResolve(approval.id, action.decision) },
+              enabled = !resolving,
+              modifier = Modifier.fillMaxWidth(),
+            )
+          } else {
+            ClawSecondaryButton(
+              text = action.label,
+              onClick = { onResolve(approval.id, action.decision) },
+              enabled = !resolving,
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
         }
       }
     }
+  }
+}
+
+@Composable
+private fun ExecApprovalCommandReview(commandText: String) {
+  Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(8.dp),
+    color = ClawTheme.colors.surfacePressed,
+    border = BorderStroke(1.dp, ClawTheme.colors.border),
+  ) {
+    SelectionContainer {
+      Text(
+        text = commandText,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        style = ClawTheme.type.body.copy(fontFamily = FontFamily.Monospace),
+        color = ClawTheme.colors.text,
+      )
+    }
+  }
+}
+
+internal data class ExecApprovalAction(
+  val decision: String,
+  val label: String,
+)
+
+internal fun execApprovalActions(allowedDecisions: List<String>): List<ExecApprovalAction> =
+  allowedDecisions.mapNotNull { decision ->
+    when (decision) {
+      "allow-once" -> ExecApprovalAction(decision, "Allow Once")
+      "allow-always" -> ExecApprovalAction(decision, "Allow Always")
+      "deny" -> ExecApprovalAction(decision, "Deny")
+      else -> null
+    }
+  }
+
+internal fun execApprovalNoticeForCard(
+  notice: GatewayExecApprovalNotice?,
+  approvalId: String,
+): GatewayExecApprovalNotice? = notice?.takeIf { it.approvalId == approvalId }
+
+internal fun execApprovalEmptyInboxNotice(
+  notice: GatewayExecApprovalNotice?,
+  approvals: List<GatewayExecApprovalSummary>,
+): GatewayExecApprovalNotice? = notice?.takeIf { approvals.isEmpty() }
+
+@Composable
+private fun ExecApprovalNotice(notice: GatewayExecApprovalNotice) {
+  ClawPanel {
+    Text(
+      text = notice.message,
+      style = ClawTheme.type.body,
+      color = if (notice.warning) ClawTheme.colors.warning else ClawTheme.colors.success,
+    )
   }
 }
 

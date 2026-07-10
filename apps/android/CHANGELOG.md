@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Routes exec approval review through the Gateway's durable approval records, including first-answer-wins results from other authorized surfaces, fail-closed reconciliation after ambiguous writes, and compatibility with older Gateway v4 peers.
+
 ## 2026.7.1 - 2026-07-08
 
 Adds multi-gateway switching with isolated credentials, history, queues, and notification routing.

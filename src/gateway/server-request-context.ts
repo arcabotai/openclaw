@@ -20,6 +20,7 @@ export type GatewayRequestContextParams = {
   isTerminalEnabled: GatewayRequestContext["isTerminalEnabled"];
   execApprovalManager: GatewayRequestContext["execApprovalManager"];
   pluginApprovalManager: GatewayRequestContext["pluginApprovalManager"];
+  listSessionPendingApprovals: GatewayRequestContext["listSessionPendingApprovals"];
   loadGatewayModelCatalog: GatewayRequestContext["loadGatewayModelCatalog"];
   getHealthCache: GatewayRequestContext["getHealthCache"];
   refreshHealthSnapshot: GatewayRequestContext["refreshHealthSnapshot"];
@@ -103,6 +104,7 @@ export function createGatewayRequestContext(
     isTerminalEnabled: params.isTerminalEnabled,
     execApprovalManager: params.execApprovalManager,
     pluginApprovalManager: params.pluginApprovalManager,
+    listSessionPendingApprovals: params.listSessionPendingApprovals,
     loadGatewayModelCatalog: params.loadGatewayModelCatalog,
     getHealthCache: params.getHealthCache,
     refreshHealthSnapshot: params.refreshHealthSnapshot,

@@ -26,6 +26,7 @@ Docs: https://docs.openclaw.ai
 - **Multi-surface approval actions:** carry typed approval, link, and Web App actions through the plugin SDK and bundled channels, keep callbacks transport-private with explicit owner kinds and durable compact locators, and show canonical first-answer outcomes on clicks and supported native terminal updates. (#103505)
 - **Standalone approval links:** open authenticated, mobile-friendly `/approve/{id}` documents from the owning Gateway, preserve first-answer terminal truth across reloads and reconnects, and fail closed on unavailable or malformed approval state. (#103505)
 - **Native mobile approvals:** review durable exec approvals from Android, iPhone, and Apple Watch, preserve warning and owner context, reconcile lost acknowledgements through canonical Gateway readback, and show the first answer recorded on any authorized surface. (#103505)
+- **Ancestor approval streams:** opt exact session streams into sanitized approval lifecycle events and authoritative reconnect replay so parent and orchestrator views receive sub-agent pending and terminal truth without transcript mutation or agent wake. (#103505)
 
 ### Fixes
 

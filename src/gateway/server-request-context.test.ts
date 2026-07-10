@@ -30,6 +30,7 @@ function makeContextParams(
     isTerminalEnabled: vi.fn(() => false),
     execApprovalManager: undefined,
     pluginApprovalManager: undefined,
+    listSessionPendingApprovals: undefined,
     loadGatewayModelCatalog: vi.fn(async () => []),
     getHealthCache: vi.fn(() => null),
     refreshHealthSnapshot: vi.fn(async () => ({}) as never),

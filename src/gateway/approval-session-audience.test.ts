@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveApprovalSessionAudienceFromSources,
+  resolveApprovalSourceStreamKey,
   type ApprovalSessionAudienceSources,
 } from "./approval-session-audience.js";
 
@@ -32,6 +33,13 @@ function resolveAudience(
 }
 
 describe("resolveApprovalSessionAudienceFromSources", () => {
+  it("scopes a global source to the agent-specific stream key", () => {
+    expect(resolveApprovalSourceStreamKey(" global ", "Work Agent")).toBe(
+      "agent:work-agent:global",
+    );
+    expect(resolveApprovalSourceStreamKey("agent:work:child", "work")).toBe("agent:work:child");
+  });
+
   it("keeps the canonical source first when it has no ancestors", () => {
     expect(
       resolveAudience(" Child ", {}, (key) => `agent:main:${key.trim().toLowerCase()}`),

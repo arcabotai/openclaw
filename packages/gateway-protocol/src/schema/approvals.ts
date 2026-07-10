@@ -104,7 +104,6 @@ const ApprovalRecordCommonFields = {
 
 const ApprovalResolutionFields = {
   resolvedAtMs: Type.Integer({ minimum: 0 }),
-  reason: ApprovalTerminalReasonSchema,
 };
 
 /** Approval that has not yet accepted a reviewer decision. */
@@ -120,6 +119,7 @@ export const AllowedApprovalSnapshotSchema = Type.Object(
     ...ApprovalResolutionFields,
     status: Type.Literal("allowed"),
     decision: ApprovalAllowDecisionSchema,
+    reason: Type.Literal("user"),
   },
   { additionalProperties: false },
 );
@@ -131,6 +131,12 @@ export const DeniedApprovalSnapshotSchema = Type.Object(
     ...ApprovalResolutionFields,
     status: Type.Literal("denied"),
     decision: Type.Literal("deny"),
+    reason: Type.Union([
+      Type.Literal("user"),
+      Type.Literal("malformed-verdict"),
+      Type.Literal("no-route"),
+      Type.Literal("storage-corrupt"),
+    ]),
   },
   { additionalProperties: false },
 );
@@ -141,6 +147,7 @@ export const ExpiredApprovalSnapshotSchema = Type.Object(
     ...ApprovalRecordCommonFields,
     ...ApprovalResolutionFields,
     status: Type.Literal("expired"),
+    reason: Type.Literal("timeout"),
   },
   { additionalProperties: false },
 );
@@ -151,6 +158,7 @@ export const CancelledApprovalSnapshotSchema = Type.Object(
     ...ApprovalRecordCommonFields,
     ...ApprovalResolutionFields,
     status: Type.Literal("cancelled"),
+    reason: Type.Union([Type.Literal("run-aborted"), Type.Literal("gateway-restart")]),
   },
   { additionalProperties: false },
 );
@@ -199,6 +207,43 @@ export const ApprovalResolveResultSchema = Type.Object(
   {
     applied: Type.Boolean(),
     approval: TerminalApprovalSnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+
+const SessionApprovalEventCommonFields = {
+  sessionKey: NonEmptyString,
+  sourceSessionKey: Type.Optional(NonEmptyString),
+  updatedAtMs: Type.Integer({ minimum: 0 }),
+};
+
+/** Sanitized approval transition delivered only to an opted-in session audience. */
+export const SessionApprovalEventSchema = Type.Union([
+  Type.Object(
+    {
+      ...SessionApprovalEventCommonFields,
+      phase: Type.Literal("pending"),
+      approval: PendingApprovalSnapshotSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...SessionApprovalEventCommonFields,
+      phase: Type.Literal("terminal"),
+      approval: TerminalApprovalSnapshotSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+/** Authoritative pending approval set returned when a session stream subscribes. */
+export const SessionApprovalReplaySchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+    updatedAtMs: Type.Integer({ minimum: 0 }),
+    approvals: Type.Array(PendingApprovalSnapshotSchema),
+    truncated: Type.Boolean(),
   },
   { additionalProperties: false },
 );

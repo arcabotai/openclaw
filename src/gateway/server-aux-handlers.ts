@@ -8,10 +8,8 @@ import {
   resolveExecApprovalRequestAllowedDecisions,
   type ExecApprovalRequestPayload,
 } from "../infra/exec-approvals.js";
-import {
-  resolvePluginApprovalRequestAllowedDecisions,
-  type PluginApprovalRequestPayload,
-} from "../infra/plugin-approvals.js";
+import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../infra/plugin-approval-canonical-decisions.js";
+import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import {
   resolveCommandSecretsFromActiveRuntimeSnapshot,
   type CommandSecretAssignment,
@@ -28,7 +26,10 @@ import {
   type GatewayReloadPlan,
 } from "./config-reload-plan.js";
 import { createExecApprovalIosPushDelivery } from "./exec-approval-ios-push.js";
-import { ExecApprovalManager } from "./exec-approval-manager.js";
+import {
+  ExecApprovalManager,
+  type OperatorApprovalLifecycleEvent,
+} from "./exec-approval-manager.js";
 import {
   closeOrphanedOperatorApprovals,
   pruneTerminalOperatorApprovals,
@@ -87,6 +88,7 @@ export function createGatewayAuxHandlers(params: {
   stopChannel: (name: ChannelKind) => Promise<void>;
   getChannelAutostartSuppression?: () => ChannelAutostartSuppression | null;
   logChannels: { info: (msg: string) => void };
+  onApprovalLifecycle?: (event: OperatorApprovalLifecycleEvent) => void;
 }) {
   // Both approval kinds share one durable first-answer-wins registry and
   // Gateway-lifetime epoch while retaining separate in-process waiter maps.
@@ -103,6 +105,7 @@ export function createGatewayAuxHandlers(params: {
     approvalKind: "exec",
     persistence: approvalPersistence,
     resolveAllowedDecisions: resolveExecApprovalRequestAllowedDecisions,
+    onLifecycle: params.onApprovalLifecycle,
     onError: (error, context) => {
       params.log.error?.(
         `${context.approvalKind} approval ${context.operation} failed for ${context.approvalId}: ${String(error)}`,
@@ -125,7 +128,8 @@ export function createGatewayAuxHandlers(params: {
   const pluginApprovalManager = new ExecApprovalManager<PluginApprovalRequestPayload>({
     approvalKind: "plugin",
     persistence: approvalPersistence,
-    resolveAllowedDecisions: (request) => resolvePluginApprovalRequestAllowedDecisions(request),
+    resolveAllowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions,
+    onLifecycle: params.onApprovalLifecycle,
     onError: (error, context) => {
       params.log.error?.(
         `${context.approvalKind} approval ${context.operation} failed for ${context.approvalId}: ${String(error)}`,

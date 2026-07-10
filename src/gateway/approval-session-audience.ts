@@ -1,8 +1,10 @@
+import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { buildLatestSubagentRunReadIndex } from "../agents/subagent-registry-read.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import {
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
@@ -98,32 +100,64 @@ export function resolveApprovalSessionAudienceFromSources(params: {
 
 function createRuntimeApprovalSessionAudienceSources(
   cfg: OpenClawConfig,
+  sourceAgentId?: string | null,
 ): ApprovalSessionAudienceSources {
   const subagentRuns = buildLatestSubagentRunReadIndex();
+  const resolveStorageTarget = (sessionKey: string): { agentId: string; sessionKey: string } => {
+    const parsed = parseAgentSessionKey(sessionKey);
+    if (parsed?.rest.toLowerCase() === "global") {
+      return { agentId: normalizeAgentId(parsed.agentId), sessionKey: "global" };
+    }
+    return {
+      agentId: resolveSessionStoreAgentId(cfg, sessionKey),
+      sessionKey,
+    };
+  };
   return {
     canonicalizeSessionKey: (sessionKey, relativeToSessionKey) => {
       if (!relativeToSessionKey) {
-        return resolveSessionStoreKey({ cfg, sessionKey });
+        const canonical = resolveSessionStoreKey({ cfg, sessionKey });
+        const ownerAgentId = sourceAgentId ?? resolveDefaultAgentId(cfg);
+        // Storage uses the bare global sentinel, while live session streams are
+        // agent-scoped so one agent cannot receive another's global events.
+        return resolveApprovalSourceStreamKey(canonical, ownerAgentId);
       }
       const relativeAgentId = resolveSessionStoreAgentId(cfg, relativeToSessionKey);
-      return canonicalizeSpawnedByForAgent(cfg, relativeAgentId, sessionKey);
+      const canonical = canonicalizeSpawnedByForAgent(cfg, relativeAgentId, sessionKey);
+      return canonical ? resolveApprovalSourceStreamKey(canonical, relativeAgentId) : canonical;
     },
     getLatestSubagentLineage: (sessionKey) => subagentRuns.getLatestSubagentRun(sessionKey),
-    getStoredSessionLineage: (sessionKey) =>
-      loadSessionEntry({
-        agentId: resolveSessionStoreAgentId(cfg, sessionKey),
+    getStoredSessionLineage: (sessionKey) => {
+      const target = resolveStorageTarget(sessionKey);
+      return loadSessionEntry({
+        agentId: target.agentId,
         clone: false,
         hydrateSkillPromptRefs: false,
-        sessionKey,
-      }),
+        sessionKey: target.sessionKey,
+      });
+    },
   };
 }
 
 /** Resolves an approval audience from the live registry and session stores. */
-export function resolveApprovalSessionAudience(sourceSessionKey: string): string[] {
+export function resolveApprovalSessionAudience(
+  sourceSessionKey: string,
+  sourceAgentId?: string | null,
+): string[] {
   const cfg = getRuntimeConfig();
   return resolveApprovalSessionAudienceFromSources({
     sourceSessionKey,
-    sources: createRuntimeApprovalSessionAudienceSources(cfg),
+    sources: createRuntimeApprovalSessionAudienceSources(cfg, sourceAgentId),
   });
+}
+
+/** Best-effort stream key used when lineage lookup is unavailable. */
+export function resolveApprovalSourceStreamKey(
+  sourceSessionKey: string,
+  sourceAgentId?: string | null,
+): string {
+  const normalizedSessionKey = sourceSessionKey.trim();
+  return normalizedSessionKey === "global" && sourceAgentId
+    ? `agent:${normalizeAgentId(sourceAgentId)}:global`
+    : normalizedSessionKey;
 }

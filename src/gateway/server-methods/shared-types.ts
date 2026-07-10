@@ -4,6 +4,7 @@ import type {
   ConnectParams,
   ErrorShape,
   RequestFrame,
+  SessionApprovalReplay,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import type { CliDeps } from "../../cli/deps.types.js";
@@ -75,6 +76,10 @@ export type GatewayRequestContext = {
   isTerminalEnabled: () => boolean;
   execApprovalManager?: ExecApprovalManager;
   pluginApprovalManager?: ExecApprovalManager<PluginApprovalRequestPayload>;
+  listSessionPendingApprovals?: (
+    sessionKey: string,
+    client: GatewayClient | null,
+  ) => SessionApprovalReplay;
   loadGatewayModelCatalog: (params?: { readOnly?: boolean }) => Promise<ModelCatalogEntry[]>;
   getHealthCache: () => HealthSummary | null;
   refreshHealthSnapshot: (opts?: {
@@ -131,7 +136,11 @@ export type GatewayRequestContext = {
   ) => ChatRunEntry | undefined;
   subscribeSessionEvents: (connId: string) => void;
   unsubscribeSessionEvents: (connId: string) => void;
-  subscribeSessionMessageEvents: (connId: string, sessionKey: string) => void;
+  subscribeSessionMessageEvents: (
+    connId: string,
+    sessionKey: string,
+    opts?: { includeApprovals?: boolean },
+  ) => void;
   unsubscribeSessionMessageEvents: (connId: string, sessionKey: string) => void;
   unsubscribeAllSessionEvents: (connId: string) => void;
   getSessionEventSubscriberConnIds: () => ReadonlySet<string>;

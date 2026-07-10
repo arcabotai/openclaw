@@ -35,13 +35,13 @@ import {
 import { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { resolveModelAgentRuntimeMetadata } from "../../agents/agent-runtime-metadata.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import {
   abortEmbeddedAgentRun,
   isEmbeddedAgentRunActive,
   waitForEmbeddedAgentRunEnd,
 } from "../../agents/embedded-agent-runner/runs.js";
 import { compactEmbeddedAgentSession } from "../../agents/embedded-agent.js";
+import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import { insideGitCheckout } from "../../agents/worktrees/git.js";
 import { managedWorktrees } from "../../agents/worktrees/service.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue/cleanup.js";
@@ -81,7 +81,8 @@ import {
   SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
 } from "../../sessions/session-lifecycle-admission.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
-import { ADMIN_SCOPE } from "../operator-scopes.js";
+import { canReviewOperatorApproval } from "../operator-approval-authorization.js";
+import { ADMIN_SCOPE, APPROVALS_SCOPE } from "../operator-scopes.js";
 import { resolveSessionKeyForRun } from "../server-session-key.js";
 import {
   createFileBackedCompactionCheckpointStore,
@@ -935,6 +936,17 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     if (!key) {
       return;
     }
+    if (p.includeApprovals === true && !canReviewOperatorApproval(client)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `sessions.messages.subscribe includeApprovals requires a paired device and gateway scope: ${APPROVALS_SCOPE}`,
+        ),
+      );
+      return;
+    }
     const cfg = context.getRuntimeConfig();
     const requestedAgent = resolveRequestedGlobalAgentId(cfg, key, p.agentId);
     if (!requestedAgent.ok) {
@@ -949,8 +961,48 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       defaultAgentId: resolveDefaultAgentId(cfg),
     });
     if (connId) {
-      context.subscribeSessionMessageEvents(connId, subscriptionKey);
-      respond(true, { subscribed: true, key: canonicalKey }, undefined);
+      let approvalReplay;
+      if (p.includeApprovals === true) {
+        try {
+          approvalReplay = context.listSessionPendingApprovals?.(subscriptionKey, client);
+        } catch (error) {
+          context.logGateway.error(`session approval replay failed: ${String(error)}`);
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, "session approval replay unavailable"),
+          );
+          return;
+        }
+        if (!approvalReplay) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, "session approval replay unavailable"),
+          );
+          return;
+        }
+      }
+      if (p.includeApprovals === true) {
+        context.subscribeSessionMessageEvents(connId, subscriptionKey, {
+          includeApprovals: true,
+        });
+      } else {
+        context.subscribeSessionMessageEvents(connId, subscriptionKey);
+      }
+      respond(
+        true,
+        {
+          subscribed: true,
+          key: canonicalKey,
+          ...(p.includeApprovals === true
+            ? {
+                approvalReplay,
+              }
+            : {}),
+        },
+        undefined,
+      );
       return;
     }
     respond(true, { subscribed: false, key: canonicalKey }, undefined);
@@ -2852,8 +2904,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
               spawnedBy: latestEntry.spawnedBy,
               workspaceDir: latestEntry.spawnedWorkspaceDir,
               cwd: latestEntry.spawnedCwd,
-            }) ??
-            resolveAgentWorkspaceDir(cfg, target.agentId);
+            }) ?? resolveAgentWorkspaceDir(cfg, target.agentId);
           const operationId = randomUUID();
           emitSessionOperation(context, {
             operationId,

@@ -18,6 +18,7 @@ export type PluginHookBeforeToolCallResult = {
     description: string;
     severity?: "info" | "warning" | "critical";
     timeoutMs?: number;
+    /** @deprecated Unresolved approvals always deny; retained for plugin API compatibility. */
     timeoutBehavior?: "allow" | "deny";
     /** Override timeout text and return the timeout as a blocked tool result. */
     timeoutReason?: string;

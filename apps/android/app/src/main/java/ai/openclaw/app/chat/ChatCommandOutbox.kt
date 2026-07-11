@@ -158,6 +158,17 @@ interface ChatCommandOutbox {
   ): Int
 
   /**
+   * Atomically claims a queued row for one dispatch (queued -> sending). Returns 0 when the row
+   * vanished or another dispatcher already claimed it, so the direct-send path and the flush
+   * loop can never both send the same row.
+   */
+  suspend fun claimForSending(
+    id: String,
+    retryCount: Int,
+    lastError: String?,
+  ): Int
+
+  /**
    * Pins a row enqueued under the pre-hello "main" alias to the canonical session key it first
    * resolves to. Replay after that must never re-resolve, so a later default-agent change
    * cannot redirect already-captured input.
@@ -277,6 +288,18 @@ internal interface ChatOutboxDao {
   suspend fun updateStatus(
     id: String,
     status: String,
+    retryCount: Int,
+    lastError: String?,
+  ): Int
+
+  @Query(
+    "UPDATE outbox_commands SET status = :toStatus, retryCount = :retryCount, lastError = :lastError " +
+      "WHERE id = :id AND status = :fromStatus",
+  )
+  suspend fun claimStatus(
+    id: String,
+    fromStatus: String,
+    toStatus: String,
     retryCount: Int,
     lastError: String?,
   ): Int
@@ -473,6 +496,19 @@ class RoomChatCommandOutbox internal constructor(
     retryCount: Int,
     lastError: String?,
   ): Int = database.outboxDao().updateStatus(id = id, status = status.dbValue, retryCount = retryCount, lastError = lastError)
+
+  override suspend fun claimForSending(
+    id: String,
+    retryCount: Int,
+    lastError: String?,
+  ): Int =
+    database.outboxDao().claimStatus(
+      id = id,
+      fromStatus = ChatOutboxStatus.Queued.dbValue,
+      toStatus = ChatOutboxStatus.Sending.dbValue,
+      retryCount = retryCount,
+      lastError = lastError,
+    )
 
   override suspend fun pinSessionKey(
     id: String,

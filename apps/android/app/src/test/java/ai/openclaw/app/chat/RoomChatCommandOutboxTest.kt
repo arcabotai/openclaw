@@ -362,6 +362,17 @@ class RoomChatCommandOutboxTest {
     }
 
   @Test
+  fun claimForSendingIsAtomicAcrossCompetingDispatchers() =
+    runTest {
+      val queued = store.enqueueQueued("claim me", nowMs = 10)
+
+      assertEquals(1, store.claimForSending(queued.id, 0, null))
+      // The losing dispatcher gets 0 and must not send; the row is already claimed.
+      assertEquals(0, store.claimForSending(queued.id, 0, null))
+      assertEquals(ChatOutboxStatus.Sending, store.load("gateway-a").single().status)
+    }
+
+  @Test
   fun requeueForRetryKeepsSameSessionQueuedSuccessorsBehindTheRetriedRow() =
     runTest {
       val head = store.enqueueQueued("head", nowMs = 10)

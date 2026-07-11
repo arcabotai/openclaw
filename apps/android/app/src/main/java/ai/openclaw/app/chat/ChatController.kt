@@ -819,20 +819,27 @@ class ChatController internal constructor(
         // Captured for reconnect: the queued bubble is visible and flush delivers it later.
         return true
       }
+      // The startup recovery sweep flips every 'sending' row to delivery-unconfirmed. Claiming
+      // only after it completes means the sweep can never hit this live dispatch; a failed
+      // sweep leaves the row queued so reconnect flush owns delivery instead.
+      outboxRecoveryJob?.join()
+      val outbox = commandOutbox
+      if (outbox == null || !recoverInterruptedOutboxSends(outbox)) {
+        _healthOk.value = false
+        publishOutbox()
+        return true
+      }
       if (sessionHasDurableBacklog(journaled)) {
         // An older row for this session is still queued or unresolved; a direct dispatch
         // would reorder the conversation, so the FIFO flush owns delivery.
         scope.launch { flushOutbox() }
         return true
       }
-      // Claim the row for this direct dispatch; a vanished row (user delete) must not send.
-      val outbox = commandOutbox
-      val claimed =
-        outbox?.let {
-          runCatching { it.updateStatus(journaled.id, ChatOutboxStatus.Sending, 0, null) }.getOrDefault(0)
-        } ?: 0
+      // Atomically claim the row for this direct dispatch: a vanished row (user delete) or a
+      // concurrent flush claim must not lead to a second send of the same idempotency key.
+      val claimed = runCatching { outbox.claimForSending(journaled.id, 0, null) }.getOrDefault(0)
       publishOutbox()
-      if (outbox != null && claimed == 0) return true
+      if (claimed == 0) return true
     }
 
     val runId = journaled?.id ?: UUID.randomUUID().toString()
@@ -951,7 +958,9 @@ class ChatController internal constructor(
       removeOptimisticMessage(runId)
       unresolvedRepliesByRunId.remove(runId)
       updateErrorText(err.message)
-      false
+      // With a journaled row parked for review, the composer must not restore a duplicate
+      // draft: the row owns the input now. Only the journal-less path refuses the send.
+      journaled != null
     }
   }
 
@@ -1933,9 +1942,9 @@ class ChatController internal constructor(
     item: ChatOutboxItem,
     flushScope: ChatCacheScope,
   ): OutboxSendOutcome {
-    // Claim the row before sending: 0 updated rows means it was deleted since the load, and a
-    // deleted command must never be sent. Skipped (like Failed) lets the flush continue.
-    val claimed = runCatching { outbox.updateStatus(item.id, ChatOutboxStatus.Sending, item.retryCount, item.lastError) }.getOrDefault(0)
+    // Atomically claim the row before sending: 0 means it was deleted since the load or a
+    // direct dispatch claimed it first; either way this loop must never send it again.
+    val claimed = runCatching { outbox.claimForSending(item.id, item.retryCount, item.lastError) }.getOrDefault(0)
     publishOutbox()
     if (claimed == 0) return OutboxSendOutcome.Skipped
     // Bytes are loaded once per item; a storage failure here parks the row instead of sending
@@ -2006,8 +2015,8 @@ class ChatController internal constructor(
       if (!_healthOk.value || currentCacheScope() != flushScope) {
         return requeueAndStop(outbox, item.id, attempts, error)
       }
-      // Re-claim after the delay: a row deleted through any non-UI path must not be resent.
-      val reclaimed = runCatching { outbox.updateStatus(item.id, ChatOutboxStatus.Sending, attempts, error) }.getOrDefault(0)
+      // Atomically re-claim after the delay: a row deleted or claimed elsewhere must not resend.
+      val reclaimed = runCatching { outbox.claimForSending(item.id, attempts, error) }.getOrDefault(0)
       if (reclaimed == 0) {
         publishOutbox()
         return OutboxSendOutcome.Skipped

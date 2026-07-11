@@ -122,6 +122,17 @@ class ChatControllerOutboxTest {
       return 1
     }
 
+    override suspend fun claimForSending(
+      id: String,
+      retryCount: Int,
+      lastError: String?,
+    ): Int {
+      val current = rows[id] ?: return 0
+      if (current.status != ChatOutboxStatus.Queued) return 0
+      rows[id] = current.copy(status = ChatOutboxStatus.Sending, retryCount = retryCount, lastError = lastError)
+      return 1
+    }
+
     override suspend fun pinSessionKey(
       id: String,
       sessionKey: String,
@@ -1503,6 +1514,57 @@ class ChatControllerOutboxTest {
       val parked = outbox.rows.values.single()
       assertEquals(ChatOutboxStatus.Failed, parked.status)
       assertEquals(OUTBOX_DELIVERY_UNCONFIRMED_ERROR, parked.lastError)
+    }
+
+  @Test
+  fun directDispatchWaitsForStartupRecoveryBeforeClaimingItsRow() =
+    runTest {
+      val gateway = FakeGateway()
+      val outbox = FakeCommandOutbox()
+      val recoveryGate = CompletableDeferred<Unit>()
+      outbox.recoveryGate = recoveryGate
+      val chat = controller(this, gateway, outbox)
+      gateway.online = true
+      chat.load("main")
+      runCurrent()
+      chat.setThinkingLevel("off")
+
+      chat.sendMessage(message = "waits for recovery", thinkingLevel = "off", attachments = emptyList())
+      runCurrent()
+      try {
+        // The row is journaled but must not be claimed 'sending' while the unscoped recovery
+        // sweep is pending, or the sweep would park this live dispatch as unconfirmed.
+        assertTrue(gateway.sentMessages.isEmpty())
+        val row = outbox.rows.values.single()
+        assertEquals(ChatOutboxStatus.Queued, row.status)
+      } finally {
+        recoveryGate.complete(Unit)
+      }
+      advanceUntilIdle()
+      assertEquals(listOf("waits for recovery"), gateway.sentMessages)
+      assertTrue(outbox.rows.isEmpty())
+    }
+
+  @Test
+  fun ambiguousDirectSendKeepsTheComposerClearBecauseTheRowOwnsTheInput() =
+    runTest {
+      val gateway = FakeGateway()
+      val outbox = FakeCommandOutbox()
+      val chat = controller(this, gateway, outbox)
+      gateway.online = true
+      chat.load("main")
+      advanceUntilIdle()
+
+      gateway.sendFailureAfterDispatch = IllegalStateException("transport wedged")
+      val accepted = chat.sendMessageAwaitAcceptance(message = "kept by the row", thinkingLevel = "off", attachments = emptyList())
+
+      // The dispatch outcome is unknown, so the journaled row parks for review and owns the
+      // input; a false return would restore a duplicate draft into the composer.
+      assertTrue(accepted)
+      val parked = outbox.rows.values.single()
+      assertEquals(ChatOutboxStatus.Failed, parked.status)
+      assertEquals(OUTBOX_DELIVERY_UNCONFIRMED_ERROR, parked.lastError)
+      assertEquals(1, gateway.sentMessages.size)
     }
 
   @Test

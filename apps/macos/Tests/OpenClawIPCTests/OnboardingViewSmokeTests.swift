@@ -136,7 +136,7 @@ struct OnboardingViewSmokeTests {
             installing: false))
         #expect(!OnboardingView.shouldAutoInstallCLI(
             onCLIPage: true,
-            isLocal: true,
+            shouldInstall: true,
             visible: true,
             statusKnown: true,
             executableReady: true,

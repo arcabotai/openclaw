@@ -9,7 +9,9 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.room.withTransaction
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -156,8 +158,14 @@ internal interface ChatCacheDao {
 }
 
 @Database(
-  entities = [CachedSessionEntity::class, CachedMessageEntity::class, OutboxCommandEntity::class],
-  version = 2,
+  entities = [
+    CachedSessionEntity::class,
+    CachedMessageEntity::class,
+    OutboxCommandEntity::class,
+    OutboxAttachmentEntity::class,
+    OutboxAttachmentChunkEntity::class,
+  ],
+  version = 3,
   exportSchema = false,
 )
 internal abstract class ChatCacheDatabase : RoomDatabase() {
@@ -166,16 +174,70 @@ internal abstract class ChatCacheDatabase : RoomDatabase() {
   abstract fun outboxDao(): ChatOutboxDao
 
   companion object {
+    // Migration contract: outbox tables hold durable user input and must be preserved by every
+    // schema bump; cache tables are disposable and may be dropped and rebuilt inside a migration.
+    // Never reintroduce a destructive-migration fallback for upgrades.
     fun open(context: Context): ChatCacheDatabase =
       Room
         .databaseBuilder(context, ChatCacheDatabase::class.java, CHAT_TRANSCRIPT_CACHE_DB_NAME)
-        // Established contract: any schema bump drops and rebuilds instead of migrating. Cached
-        // transcripts are disposable; the outbox loses at most a handful of unsent commands at a
-        // release boundary, which is acceptable versus carrying migrations for this store.
-        .fallbackToDestructiveMigration(dropAllTables = true)
+        .addMigrations(MIGRATION_1_3, MIGRATION_2_3)
+        // Downgrades happen only on dev/sideload installs; queued input cannot be mapped onto an
+        // older schema the shipped code no longer understands.
+        .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
         .build()
   }
 }
+
+// Room-expected DDL for the current entities; used by migrations that (re)create tables. Keep in
+// lockstep with the generated schema or migration validation fails at open time.
+private const val CREATE_CACHED_SESSIONS_SQL =
+  "CREATE TABLE IF NOT EXISTS `cached_sessions` (`gatewayId` TEXT NOT NULL, `sessionKey` TEXT NOT NULL, " +
+    "`displayName` TEXT, `updatedAtMs` INTEGER, `rowOrder` INTEGER NOT NULL, PRIMARY KEY(`gatewayId`, `sessionKey`))"
+private const val CREATE_CACHED_MESSAGES_SQL =
+  "CREATE TABLE IF NOT EXISTS `cached_messages` (`gatewayId` TEXT NOT NULL, `sessionKey` TEXT NOT NULL, " +
+    "`rowOrder` INTEGER NOT NULL, `role` TEXT NOT NULL, `textPartsJson` TEXT NOT NULL, `timestampMs` INTEGER, " +
+    "`idempotencyKey` TEXT, PRIMARY KEY(`gatewayId`, `sessionKey`, `rowOrder`))"
+private const val CREATE_OUTBOX_COMMANDS_SQL =
+  "CREATE TABLE IF NOT EXISTS `outbox_commands` (`id` TEXT NOT NULL, `gatewayId` TEXT NOT NULL, " +
+    "`sessionKey` TEXT NOT NULL, `text` TEXT NOT NULL, `thinkingLevel` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, " +
+    "`status` TEXT NOT NULL, `retryCount` INTEGER NOT NULL, `lastError` TEXT, `gatedEpoch` INTEGER, PRIMARY KEY(`id`))"
+private const val CREATE_OUTBOX_ATTACHMENTS_SQL =
+  "CREATE TABLE IF NOT EXISTS `outbox_attachments` (`id` TEXT NOT NULL, `commandId` TEXT NOT NULL, " +
+    "`position` INTEGER NOT NULL, `type` TEXT NOT NULL, `mimeType` TEXT NOT NULL, `fileName` TEXT NOT NULL, " +
+    "`durationMs` INTEGER, `byteLength` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+private const val CREATE_OUTBOX_ATTACHMENTS_INDEX_SQL =
+  "CREATE INDEX IF NOT EXISTS `index_outbox_attachments_commandId` ON `outbox_attachments` (`commandId`)"
+private const val CREATE_OUTBOX_ATTACHMENT_CHUNKS_SQL =
+  "CREATE TABLE IF NOT EXISTS `outbox_attachment_chunks` (`attachmentId` TEXT NOT NULL, " +
+    "`chunkIndex` INTEGER NOT NULL, `bytes` BLOB NOT NULL, PRIMARY KEY(`attachmentId`, `chunkIndex`))"
+
+// v1 shipped cache tables only (no outbox). Nothing durable exists yet, so rebuild the disposable
+// cache in the current shape and create the outbox tables empty.
+internal val MIGRATION_1_3 =
+  object : Migration(1, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+      db.execSQL("DROP TABLE IF EXISTS `cached_sessions`")
+      db.execSQL("DROP TABLE IF EXISTS `cached_messages`")
+      db.execSQL(CREATE_CACHED_SESSIONS_SQL)
+      db.execSQL(CREATE_CACHED_MESSAGES_SQL)
+      db.execSQL(CREATE_OUTBOX_COMMANDS_SQL)
+      db.execSQL(CREATE_OUTBOX_ATTACHMENTS_SQL)
+      db.execSQL(CREATE_OUTBOX_ATTACHMENTS_INDEX_SQL)
+      db.execSQL(CREATE_OUTBOX_ATTACHMENT_CHUNKS_SQL)
+    }
+  }
+
+// v2 shipped the text-only outbox with a destructive fallback; this is the first preserving
+// upgrade. Queued rows must survive: only additive changes to outbox_commands are allowed here.
+internal val MIGRATION_2_3 =
+  object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+      db.execSQL("ALTER TABLE `outbox_commands` ADD COLUMN `gatedEpoch` INTEGER")
+      db.execSQL(CREATE_OUTBOX_ATTACHMENTS_SQL)
+      db.execSQL(CREATE_OUTBOX_ATTACHMENTS_INDEX_SQL)
+      db.execSQL(CREATE_OUTBOX_ATTACHMENT_CHUNKS_SQL)
+    }
+  }
 
 /**
  * Room-backed [ChatTranscriptCache]. Callers bind every operation to the gateway scope captured

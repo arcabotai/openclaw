@@ -1754,11 +1754,6 @@
       "translated": "Sessions"
     },
     {
-      "id": "native.android.2806eb5b11becd89",
-      "source": "Reverse session sort",
-      "translated": "Inverser le tri des sessions"
-    },
-    {
       "id": "native.android.e0f10db479f627eb",
       "source": "Recent",
       "translated": "Récent"
@@ -1779,14 +1774,14 @@
       "translated": "Rechercher des sessions"
     },
     {
-      "id": "native.android.9d0765fc76c3fca5",
-      "source": "Newest",
-      "translated": "Le plus récent"
+      "id": "native.android.dc52c5f9d7b85ec8",
+      "source": "Newest first",
+      "translated": "Plus récent d'abord"
     },
     {
-      "id": "native.android.7f0fea03a2e789d3",
-      "source": "Oldest",
-      "translated": "Le plus ancien"
+      "id": "native.android.78b9d0ab41446a1b",
+      "source": "Oldest first",
+      "translated": "Plus ancien d'abord"
     },
     {
       "id": "native.android.c6bf8751e2a7f5c7",
@@ -3802,6 +3797,16 @@
       "id": "native.android.8e3e367df24cae4b",
       "source": "Gateway offline",
       "translated": "Gateway hors ligne"
+    },
+    {
+      "id": "native.android.36ed01582459bc10",
+      "source": "Close thinking level selector",
+      "translated": "Fermer le sélecteur de niveau de réflexion"
+    },
+    {
+      "id": "native.android.82d6389036a1e211",
+      "source": "Open thinking level selector",
+      "translated": "Ouvrir le sélecteur de niveau de réflexion"
     },
     {
       "id": "native.android.623e434c83e3c020",
@@ -10704,6 +10709,16 @@
       "translated": "Motifs de chemin uniquement. Incluez '/', '~' ou '\\\\'."
     },
     {
+      "id": "native.apple.5b9878c76d9a0995",
+      "source": "This allowlist entry is inherited. Edit its owning scope and retry.",
+      "translated": "Cette entrée de liste d'autorisation est héritée. Modifiez sa portée propriétaire et réessayez."
+    },
+    {
+      "id": "native.apple.511333a8588db7e2",
+      "source": "Could not save exec approvals. Last known settings are shown; retry the change.",
+      "translated": "Impossible d'enregistrer les approbations d'exécution. Les derniers paramètres connus sont affichés ; réessayez la modification."
+    },
+    {
       "id": "native.apple.db0fa6b60bd859f8",
       "source": ":\\(endpoint.port)",
       "translated": ":\\(endpoint.port)"
@@ -11409,6 +11424,16 @@
       "translated": "Approbations d’exécution"
     },
     {
+      "id": "native.apple.348d4adeb2afab25",
+      "source": "Loading Exec Approvals…",
+      "translated": "Chargement des approbations d'exécution…"
+    },
+    {
+      "id": "native.apple.b2f5f038c81a4a89",
+      "source": "Retry Exec Approvals",
+      "translated": "Réessayer les approbations d'exécution"
+    },
+    {
       "id": "native.apple.fa9ee90b4a391979",
       "source": "Allow Canvas",
       "translated": "Autoriser Canvas"
@@ -11704,6 +11729,16 @@
       "translated": "Utilisation"
     },
     {
+      "id": "native.apple.386595fa18585dbb",
+      "source": "approvalSource requires matching systemRunPlan",
+      "translated": "approvalSource nécessite un systemRunPlan correspondant"
+    },
+    {
+      "id": "native.apple.014ff905cecd753b",
+      "source": "explicit approval requires matching systemRunPlan",
+      "translated": "l'approbation explicite nécessite un systemRunPlan correspondant"
+    },
+    {
       "id": "native.apple.7eb0a88b8274ced8",
       "source": "Node pairing approved",
       "translated": "Appairage du nœud approuvé"
@@ -11727,6 +11762,26 @@
       "id": "native.apple.dca2e9174fec56ce",
       "source": "Next",
       "translated": "Suivant"
+    },
+    {
+      "id": "native.apple.9a186b012ec473a1",
+      "source": "The Gateway setup request failed.",
+      "translated": "La requête de configuration du Gateway a échoué."
+    },
+    {
+      "id": "native.apple.52ad972e0b9498fa",
+      "source": "The Gateway setup request failed. Show details to inspect or copy the error.",
+      "translated": "La requête de configuration du Gateway a échoué. Affichez les détails pour inspecter ou copier l'erreur."
+    },
+    {
+      "id": "native.apple.9644b964d7adea91",
+      "source": "\\(label) couldn’t complete the test.",
+      "translated": "\\(label) n'a pas pu terminer le test."
+    },
+    {
+      "id": "native.apple.f9c76663d90cff5c",
+      "source": "\\(label) couldn’t complete the test. Show details to inspect or copy the error.",
+      "translated": "\\(label) n'a pas pu terminer le test. Affichez les détails pour inspecter ou copier l'erreur."
     },
     {
       "id": "native.apple.0a6a895baa7f708e",
@@ -11774,6 +11829,16 @@
       "translated": "Votre IA est prête"
     },
     {
+      "id": "native.apple.c6ec81b4e78a8a2e",
+      "source": "Setup details",
+      "translated": "Détails de configuration"
+    },
+    {
+      "id": "native.apple.b81c10df2b290e66",
+      "source": "Copy setup details",
+      "translated": "Copier les détails de configuration"
+    },
+    {
       "id": "native.apple.c3ed46eded513a65",
       "source": "No AI accounts found on this Mac",
       "translated": "Aucun compte IA trouvé sur ce Mac"
@@ -11782,11 +11847,6 @@
       "id": "native.apple.08d6423b6ed142a8",
       "source": "That’s fine — you can connect one with an API key or token. If you use Claude Code, Codex, or the Gemini CLI on this Mac, sign in there first and hit “Check again”.",
       "translated": "Ce n’est pas un problème — vous pouvez en connecter un avec une clé API ou un jeton. Si vous utilisez Claude Code, Codex ou la CLI Gemini sur ce Mac, connectez-vous d’abord là-bas et cliquez sur « Vérifier à nouveau »."
-    },
-    {
-      "id": "native.apple.f51a11c7f56bdb29",
-      "source": "Recommended",
-      "translated": "Recommandé"
     },
     {
       "id": "native.apple.d13850075df8f0f3",
@@ -12402,6 +12462,16 @@
       "id": "native.apple.048e9cc88fb7af55",
       "source": "Not Now",
       "translated": "Pas maintenant"
+    },
+    {
+      "id": "native.apple.4f271aca6df52a32",
+      "source": "Reject All",
+      "translated": "Tout rejeter"
+    },
+    {
+      "id": "native.apple.bef7b0a91ca5c184",
+      "source": "Approve All",
+      "translated": "Tout approuver"
     },
     {
       "id": "native.apple.57e27a9a3ef63ac4",
@@ -13237,6 +13307,31 @@
       "id": "native.apple.e5198b803f0b5c9f",
       "source": "Control how agent shell commands are approved on this Mac.",
       "translated": "Contrôlez la façon dont les commandes shell de l’agent sont approuvées sur ce Mac."
+    },
+    {
+      "id": "native.apple.4ec0e98876dd4130",
+      "source": "Loading settings…",
+      "translated": "Chargement des paramètres…"
+    },
+    {
+      "id": "native.apple.15112b7a64de6801",
+      "source": "Reading the persisted policy.",
+      "translated": "Lecture de la politique persistée."
+    },
+    {
+      "id": "native.apple.10ccbcb69920d863",
+      "source": "Exec Approvals Unavailable",
+      "translated": "Approbations d'exécution indisponibles"
+    },
+    {
+      "id": "native.apple.f8de480303620970",
+      "source": "Settings could not be read",
+      "translated": "Impossible de lire les paramètres"
+    },
+    {
+      "id": "native.apple.761db018bc2fc118",
+      "source": "Retry",
+      "translated": "Réessayer"
     },
     {
       "id": "native.apple.4c894d7779471cda",

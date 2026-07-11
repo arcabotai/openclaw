@@ -1754,11 +1754,6 @@
       "translated": "세션"
     },
     {
-      "id": "native.android.2806eb5b11becd89",
-      "source": "Reverse session sort",
-      "translated": "세션 정렬 반전"
-    },
-    {
       "id": "native.android.e0f10db479f627eb",
       "source": "Recent",
       "translated": "최근"
@@ -1779,13 +1774,13 @@
       "translated": "세션 검색"
     },
     {
-      "id": "native.android.9d0765fc76c3fca5",
-      "source": "Newest",
+      "id": "native.android.dc52c5f9d7b85ec8",
+      "source": "Newest first",
       "translated": "최신순"
     },
     {
-      "id": "native.android.7f0fea03a2e789d3",
-      "source": "Oldest",
+      "id": "native.android.78b9d0ab41446a1b",
+      "source": "Oldest first",
       "translated": "오래된순"
     },
     {
@@ -3802,6 +3797,16 @@
       "id": "native.android.8e3e367df24cae4b",
       "source": "Gateway offline",
       "translated": "Gateway 오프라인"
+    },
+    {
+      "id": "native.android.36ed01582459bc10",
+      "source": "Close thinking level selector",
+      "translated": "사고 수준 선택기 닫기"
+    },
+    {
+      "id": "native.android.82d6389036a1e211",
+      "source": "Open thinking level selector",
+      "translated": "사고 수준 선택기 열기"
     },
     {
       "id": "native.android.623e434c83e3c020",
@@ -10704,6 +10709,16 @@
       "translated": "경로 패턴만 가능합니다. '/', '~' 또는 '\\\\'를 포함하세요."
     },
     {
+      "id": "native.apple.5b9878c76d9a0995",
+      "source": "This allowlist entry is inherited. Edit its owning scope and retry.",
+      "translated": "이 허용 목록 항목은 상속됩니다. 소유 범위를 수정한 후 다시 시도하세요."
+    },
+    {
+      "id": "native.apple.511333a8588db7e2",
+      "source": "Could not save exec approvals. Last known settings are shown; retry the change.",
+      "translated": "실행 승인을 저장할 수 없습니다. 마지막으로 알려진 설정이 표시됩니다. 변경을 다시 시도하세요."
+    },
+    {
       "id": "native.apple.db0fa6b60bd859f8",
       "source": ":\\(endpoint.port)",
       "translated": ":\\(endpoint.port)"
@@ -11409,6 +11424,16 @@
       "translated": "실행 승인"
     },
     {
+      "id": "native.apple.348d4adeb2afab25",
+      "source": "Loading Exec Approvals…",
+      "translated": "실행 승인 로드 중…"
+    },
+    {
+      "id": "native.apple.b2f5f038c81a4a89",
+      "source": "Retry Exec Approvals",
+      "translated": "실행 승인 다시 시도"
+    },
+    {
       "id": "native.apple.fa9ee90b4a391979",
       "source": "Allow Canvas",
       "translated": "Canvas 허용"
@@ -11704,6 +11729,16 @@
       "translated": "사용량"
     },
     {
+      "id": "native.apple.386595fa18585dbb",
+      "source": "approvalSource requires matching systemRunPlan",
+      "translated": "approvalSource에는 일치하는 systemRunPlan이 필요합니다"
+    },
+    {
+      "id": "native.apple.014ff905cecd753b",
+      "source": "explicit approval requires matching systemRunPlan",
+      "translated": "명시적 승인에는 일치하는 systemRunPlan이 필요합니다"
+    },
+    {
       "id": "native.apple.7eb0a88b8274ced8",
       "source": "Node pairing approved",
       "translated": "Node 페어링이 승인되었습니다"
@@ -11727,6 +11762,26 @@
       "id": "native.apple.dca2e9174fec56ce",
       "source": "Next",
       "translated": "다음"
+    },
+    {
+      "id": "native.apple.9a186b012ec473a1",
+      "source": "The Gateway setup request failed.",
+      "translated": "Gateway 설정 요청이 실패했습니다."
+    },
+    {
+      "id": "native.apple.52ad972e0b9498fa",
+      "source": "The Gateway setup request failed. Show details to inspect or copy the error.",
+      "translated": "Gateway 설정 요청이 실패했습니다. 세부 정보를 표시하여 오류를 검사하거나 복사하세요."
+    },
+    {
+      "id": "native.apple.9644b964d7adea91",
+      "source": "\\(label) couldn’t complete the test.",
+      "translated": "\\(label)이(가) 테스트를 완료할 수 없습니다."
+    },
+    {
+      "id": "native.apple.f9c76663d90cff5c",
+      "source": "\\(label) couldn’t complete the test. Show details to inspect or copy the error.",
+      "translated": "\\(label)이(가) 테스트를 완료할 수 없습니다. 세부 정보를 표시하여 오류를 검사하거나 복사하세요."
     },
     {
       "id": "native.apple.0a6a895baa7f708e",
@@ -11774,6 +11829,16 @@
       "translated": "AI가 준비되었습니다"
     },
     {
+      "id": "native.apple.c6ec81b4e78a8a2e",
+      "source": "Setup details",
+      "translated": "설정 세부 정보"
+    },
+    {
+      "id": "native.apple.b81c10df2b290e66",
+      "source": "Copy setup details",
+      "translated": "설정 세부 정보 복사"
+    },
+    {
       "id": "native.apple.c3ed46eded513a65",
       "source": "No AI accounts found on this Mac",
       "translated": "이 Mac에서 AI 계정을 찾을 수 없습니다"
@@ -11782,11 +11847,6 @@
       "id": "native.apple.08d6423b6ed142a8",
       "source": "That’s fine — you can connect one with an API key or token. If you use Claude Code, Codex, or the Gemini CLI on this Mac, sign in there first and hit “Check again”.",
       "translated": "괜찮습니다 — API 키 또는 토큰으로 연결할 수 있습니다. 이 Mac에서 Claude Code, Codex 또는 Gemini CLI를 사용하는 경우 먼저 거기에 로그인한 다음 “다시 확인”을 누르세요."
-    },
-    {
-      "id": "native.apple.f51a11c7f56bdb29",
-      "source": "Recommended",
-      "translated": "권장"
     },
     {
       "id": "native.apple.d13850075df8f0f3",
@@ -12402,6 +12462,16 @@
       "id": "native.apple.048e9cc88fb7af55",
       "source": "Not Now",
       "translated": "나중에"
+    },
+    {
+      "id": "native.apple.4f271aca6df52a32",
+      "source": "Reject All",
+      "translated": "모두 거부"
+    },
+    {
+      "id": "native.apple.bef7b0a91ca5c184",
+      "source": "Approve All",
+      "translated": "모두 승인"
     },
     {
       "id": "native.apple.57e27a9a3ef63ac4",
@@ -13237,6 +13307,31 @@
       "id": "native.apple.e5198b803f0b5c9f",
       "source": "Control how agent shell commands are approved on this Mac.",
       "translated": "이 Mac에서 에이전트 셸 명령 승인 방식을 제어합니다."
+    },
+    {
+      "id": "native.apple.4ec0e98876dd4130",
+      "source": "Loading settings…",
+      "translated": "설정 로드 중…"
+    },
+    {
+      "id": "native.apple.15112b7a64de6801",
+      "source": "Reading the persisted policy.",
+      "translated": "저장된 정책을 읽는 중입니다."
+    },
+    {
+      "id": "native.apple.10ccbcb69920d863",
+      "source": "Exec Approvals Unavailable",
+      "translated": "실행 승인을 사용할 수 없음"
+    },
+    {
+      "id": "native.apple.f8de480303620970",
+      "source": "Settings could not be read",
+      "translated": "설정을 읽을 수 없음"
+    },
+    {
+      "id": "native.apple.761db018bc2fc118",
+      "source": "Retry",
+      "translated": "다시 시도"
     },
     {
       "id": "native.apple.4c894d7779471cda",

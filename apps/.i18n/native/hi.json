@@ -1754,11 +1754,6 @@
       "translated": "सत्र"
     },
     {
-      "id": "native.android.2806eb5b11becd89",
-      "source": "Reverse session sort",
-      "translated": "सत्र क्रम उलटें"
-    },
-    {
       "id": "native.android.e0f10db479f627eb",
       "source": "Recent",
       "translated": "हाल के"
@@ -1779,14 +1774,14 @@
       "translated": "सत्र खोजें"
     },
     {
-      "id": "native.android.9d0765fc76c3fca5",
-      "source": "Newest",
-      "translated": "नवीनतम"
+      "id": "native.android.dc52c5f9d7b85ec8",
+      "source": "Newest first",
+      "translated": "सबसे नए पहले"
     },
     {
-      "id": "native.android.7f0fea03a2e789d3",
-      "source": "Oldest",
-      "translated": "सबसे पुराने"
+      "id": "native.android.78b9d0ab41446a1b",
+      "source": "Oldest first",
+      "translated": "सबसे पुराने पहले"
     },
     {
       "id": "native.android.c6bf8751e2a7f5c7",
@@ -3802,6 +3797,16 @@
       "id": "native.android.8e3e367df24cae4b",
       "source": "Gateway offline",
       "translated": "Gateway ऑफ़लाइन"
+    },
+    {
+      "id": "native.android.36ed01582459bc10",
+      "source": "Close thinking level selector",
+      "translated": "थिंकिंग स्तर चयनकर्ता बंद करें"
+    },
+    {
+      "id": "native.android.82d6389036a1e211",
+      "source": "Open thinking level selector",
+      "translated": "थिंकिंग स्तर चयनकर्ता खोलें"
     },
     {
       "id": "native.android.623e434c83e3c020",
@@ -10704,6 +10709,16 @@
       "translated": "केवल पाथ पैटर्न। '/', '~', या '\\\\' शामिल करें।"
     },
     {
+      "id": "native.apple.5b9878c76d9a0995",
+      "source": "This allowlist entry is inherited. Edit its owning scope and retry.",
+      "translated": "यह allowlist प्रविष्टि इनहेरिट की गई है। इसके स्वामी स्कोप को संपादित करें और पुनः प्रयास करें।"
+    },
+    {
+      "id": "native.apple.511333a8588db7e2",
+      "source": "Could not save exec approvals. Last known settings are shown; retry the change.",
+      "translated": "exec स्वीकृतियाँ सहेजी नहीं जा सकीं। अंतिम ज्ञात सेटिंग्स दिखाई गई हैं; परिवर्तन पुनः प्रयास करें।"
+    },
+    {
       "id": "native.apple.db0fa6b60bd859f8",
       "source": ":\\(endpoint.port)",
       "translated": ":\\(endpoint.port)"
@@ -11409,6 +11424,16 @@
       "translated": "Exec अनुमोदन"
     },
     {
+      "id": "native.apple.348d4adeb2afab25",
+      "source": "Loading Exec Approvals…",
+      "translated": "Exec Approvals लोड हो रहे हैं…"
+    },
+    {
+      "id": "native.apple.b2f5f038c81a4a89",
+      "source": "Retry Exec Approvals",
+      "translated": "Exec Approvals पुनः प्रयास करें"
+    },
+    {
       "id": "native.apple.fa9ee90b4a391979",
       "source": "Allow Canvas",
       "translated": "Canvas की अनुमति दें"
@@ -11704,6 +11729,16 @@
       "translated": "उपयोग"
     },
     {
+      "id": "native.apple.386595fa18585dbb",
+      "source": "approvalSource requires matching systemRunPlan",
+      "translated": "approvalSource के लिए मिलान करने वाला systemRunPlan आवश्यक है"
+    },
+    {
+      "id": "native.apple.014ff905cecd753b",
+      "source": "explicit approval requires matching systemRunPlan",
+      "translated": "स्पष्ट स्वीकृति के लिए मिलान करने वाला systemRunPlan आवश्यक है"
+    },
+    {
       "id": "native.apple.7eb0a88b8274ced8",
       "source": "Node pairing approved",
       "translated": "Node pairing स्वीकृत"
@@ -11727,6 +11762,26 @@
       "id": "native.apple.dca2e9174fec56ce",
       "source": "Next",
       "translated": "अगला"
+    },
+    {
+      "id": "native.apple.9a186b012ec473a1",
+      "source": "The Gateway setup request failed.",
+      "translated": "Gateway सेटअप अनुरोध विफल हुआ।"
+    },
+    {
+      "id": "native.apple.52ad972e0b9498fa",
+      "source": "The Gateway setup request failed. Show details to inspect or copy the error.",
+      "translated": "Gateway सेटअप अनुरोध विफल हुआ। त्रुटि का निरीक्षण या प्रतिलिपि करने के लिए विवरण दिखाएँ।"
+    },
+    {
+      "id": "native.apple.9644b964d7adea91",
+      "source": "\\(label) couldn’t complete the test.",
+      "translated": "\\(label) परीक्षण पूरा नहीं कर सका।"
+    },
+    {
+      "id": "native.apple.f9c76663d90cff5c",
+      "source": "\\(label) couldn’t complete the test. Show details to inspect or copy the error.",
+      "translated": "\\(label) परीक्षण पूरा नहीं कर सका। त्रुटि का निरीक्षण या प्रतिलिपि करने के लिए विवरण दिखाएँ।"
     },
     {
       "id": "native.apple.0a6a895baa7f708e",
@@ -11774,6 +11829,16 @@
       "translated": "आपका AI तैयार है"
     },
     {
+      "id": "native.apple.c6ec81b4e78a8a2e",
+      "source": "Setup details",
+      "translated": "सेटअप विवरण"
+    },
+    {
+      "id": "native.apple.b81c10df2b290e66",
+      "source": "Copy setup details",
+      "translated": "सेटअप विवरण प्रतिलिपि करें"
+    },
+    {
       "id": "native.apple.c3ed46eded513a65",
       "source": "No AI accounts found on this Mac",
       "translated": "इस Mac पर कोई AI खाता नहीं मिला"
@@ -11782,11 +11847,6 @@
       "id": "native.apple.08d6423b6ed142a8",
       "source": "That’s fine — you can connect one with an API key or token. If you use Claude Code, Codex, or the Gemini CLI on this Mac, sign in there first and hit “Check again”.",
       "translated": "कोई बात नहीं — आप एक API key या token से कनेक्ट कर सकते हैं। यदि आप इस Mac पर Claude Code, Codex, या Gemini CLI का उपयोग करते हैं, तो पहले वहाँ साइन इन करें और “फिर से जाँचें” पर क्लिक करें।"
-    },
-    {
-      "id": "native.apple.f51a11c7f56bdb29",
-      "source": "Recommended",
-      "translated": "अनुशंसित"
     },
     {
       "id": "native.apple.d13850075df8f0f3",
@@ -12402,6 +12462,16 @@
       "id": "native.apple.048e9cc88fb7af55",
       "source": "Not Now",
       "translated": "अभी नहीं"
+    },
+    {
+      "id": "native.apple.4f271aca6df52a32",
+      "source": "Reject All",
+      "translated": "सभी अस्वीकार करें"
+    },
+    {
+      "id": "native.apple.bef7b0a91ca5c184",
+      "source": "Approve All",
+      "translated": "सभी स्वीकृत करें"
     },
     {
       "id": "native.apple.57e27a9a3ef63ac4",
@@ -13237,6 +13307,31 @@
       "id": "native.apple.e5198b803f0b5c9f",
       "source": "Control how agent shell commands are approved on this Mac.",
       "translated": "नियंत्रित करें कि इस Mac पर agent shell commands को कैसे अनुमोदित किया जाता है।"
+    },
+    {
+      "id": "native.apple.4ec0e98876dd4130",
+      "source": "Loading settings…",
+      "translated": "सेटिंग्स लोड हो रही हैं…"
+    },
+    {
+      "id": "native.apple.15112b7a64de6801",
+      "source": "Reading the persisted policy.",
+      "translated": "स्थायी नीति पढ़ी जा रही है।"
+    },
+    {
+      "id": "native.apple.10ccbcb69920d863",
+      "source": "Exec Approvals Unavailable",
+      "translated": "Exec अनुमोदन अनुपलब्ध"
+    },
+    {
+      "id": "native.apple.f8de480303620970",
+      "source": "Settings could not be read",
+      "translated": "सेटिंग्स पढ़ी नहीं जा सकीं"
+    },
+    {
+      "id": "native.apple.761db018bc2fc118",
+      "source": "Retry",
+      "translated": "पुनः प्रयास करें"
     },
     {
       "id": "native.apple.4c894d7779471cda",

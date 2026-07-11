@@ -14,6 +14,7 @@ import { listAgentIds, resolveAgentWorkspaceDir } from "../../agents/agent-scope
 import { managedWorktrees, WorktreeSnapshotError } from "../../agents/worktrees/service.js";
 import type { ManagedWorktreeService } from "../../agents/worktrees/service.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
+import { isManagedWorktreeOwnerActive } from "../worktree-owner-activity.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 type WorktreeService = Pick<
@@ -143,7 +144,7 @@ export function createWorktreesHandlers(service: WorktreeService): GatewayReques
         return;
       }
       try {
-        respond(true, await service.gc(), undefined);
+        respond(true, await service.gc({ isOwnerActive: isManagedWorktreeOwnerActive }), undefined);
       } catch (error) {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(error)));
       }

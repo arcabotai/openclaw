@@ -65,6 +65,9 @@ describe("worktrees gateway methods", () => {
       { removed: [record.id], orphansDeleted: 1, snapshotsPruned: 2 },
       undefined,
     ]);
+    expect(service.gc).toHaveBeenCalledWith({
+      isOwnerActive: expect.any(Function),
+    });
 
     expect(service.create).toHaveBeenCalledWith({
       repoRoot: "/repo",

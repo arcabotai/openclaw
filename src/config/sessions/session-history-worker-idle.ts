@@ -1,4 +1,5 @@
 import path from "node:path";
+import { getSqliteRuntimeCapabilities } from "../../infra/bun-sqlite-library.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { historyDatabases } from "./session-transcript-worker-resources.js";
 
@@ -15,6 +16,19 @@ function nativeClosePool(pool: { rotate: () => Promise<void> }): NativeClosePool
     return undefined;
   }
   return pool as NativeClosePool;
+}
+
+/**
+ * The pool latches false when its first worker started before close qualification
+ * (`session-transcript-read-pools.ts` keeps that false until rotation). Once this
+ * process is allowed to close native handles, `closeResources` is a real sqlite
+ * close for the lanes still attached.
+ */
+function poolAllowsNativeClose(pool: NativeClosePool): boolean {
+  if (pool.canCloseNativeResources?.() !== false) {
+    return true;
+  }
+  return getSqliteRuntimeCapabilities().explicitSqliteCloseReleasesNativeResources;
 }
 
 function settleWithin(work: Promise<unknown>, budgetMs: number): Promise<boolean> {
@@ -74,7 +88,7 @@ export async function releaseSessionHistoryWorkerDatabases(options: {
   for (const resource of selected) {
     for (const lane of Array.from(resource.nativeLanes)) {
       const pool = nativeClosePool(lane.pool);
-      if (!pool || pool.canCloseNativeResources?.() === false) {
+      if (!pool || !poolAllowsNativeClose(pool)) {
         return false;
       }
       resource.nativeLanes.delete(lane);

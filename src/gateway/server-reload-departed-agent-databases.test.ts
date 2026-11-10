@@ -22,12 +22,23 @@ import {
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import { readSessionEntrySnapshotInWorker } from "../config/sessions/session-transcript-read-worker-runtime.js";
+import {
+  historyLane,
+  maintenanceLane,
+  projectionLane,
+  targetDiscoveryLane,
+  transcriptSearchLane,
+  type SessionHistoryWorkerLane,
+} from "../config/sessions/session-transcript-worker-resources.js";
 import {
   retainSessionHistoryWorkerDatabase,
+  trackSessionHistoryHostEffect,
   withSessionHistoryWorkerDatabase,
 } from "../config/sessions/session-transcript-worker-runtime.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isDeletedAgentDatabasePath } from "../infra/agent-database-readers.js";
+import { getSqliteRuntimeCapabilities } from "../infra/bun-sqlite-library.js";
 import { retainSqliteDatabaseAdmissionLocation } from "../infra/sqlite-database-admission.js";
 import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
 import {
@@ -128,7 +139,7 @@ function holderIds(): string[] {
   return listOpenClawAgentDatabasesForTest().map((database) => database.agentId);
 }
 
-function readHistoryPresence(pathname: string) {
+function readHistoryPresence(pathname: string, lane: SessionHistoryWorkerLane = historyLane) {
   return withSessionHistoryWorkerDatabase(
     { agentId: "worker", path: pathname, env: process.env },
     (owner) =>
@@ -139,6 +150,7 @@ function readHistoryPresence(pathname: string) {
         databaseAgentId: "worker",
         env: process.env,
       }),
+    lane,
   );
 }
 
@@ -530,17 +542,78 @@ it("lets a held embedded turn finish before closing its database", async () => {
   expect(persisted.transcript).toContain('"stopReason":"stop"');
 });
 
-it("closes an idle agent promptly after its history worker has served a read", async () => {
+it("closes idle native history lanes when their close latch is false", async () => {
   const { opened } = installState(["main", "worker"]);
   const worker = opened.find((database) => database.agentId === "worker");
   if (!worker) {
     throw new Error("fixture did not open worker");
   }
-  await readHistoryPresence(worker.path);
+  const lanes = [
+    historyLane,
+    transcriptSearchLane,
+    projectionLane,
+    maintenanceLane,
+    targetDiscoveryLane,
+  ];
+  for (const lane of lanes) {
+    await readHistoryPresence(worker.path, lane);
+  }
+  // Session-entry reads use the Gateway's transcript read pool, which has no close latch.
+  await readSessionEntrySnapshotInWorker(
+    worker.path,
+    {
+      agentId: "worker",
+      sessionId: "missing-session",
+      storePath: worker.path,
+      sessionKey: "agent:worker:main",
+    },
+    false,
+  );
+  expect(getSqliteRuntimeCapabilities().explicitSqliteCloseReleasesNativeResources).toBe(true);
+  const latches = lanes.map((lane) =>
+    vi.spyOn(lane.pool, "canCloseNativeResources").mockReturnValue(false),
+  );
+  try {
+    const removed = commitRoster(createHandlers(), roster(["main"]));
+    await expect(finishedWithin(removed, 8_000)).resolves.toBe(true);
+    expect(worker.database.db.isOpen).toBe(false);
+    expect(fs.existsSync(worker.path)).toBe(true);
+    expect(fs.existsSync(`${worker.path}-wal`)).toBe(false);
+    expect(fs.existsSync(`${worker.path}-shm`)).toBe(false);
+  } finally {
+    for (const latch of latches) {
+      latch.mockRestore();
+    }
+  }
+});
+
+it("waits for a trajectory retention retain that finishes inside the reload budget", async () => {
+  const { opened } = installState(["main", "worker"]);
+  const worker = opened.find((database) => database.agentId === "worker");
+  if (!worker) {
+    throw new Error("fixture did not open worker");
+  }
+  const target = { agentId: "worker", path: worker.path, env: process.env };
+  const retained = retainSessionHistoryWorkerDatabase(target, maintenanceLane);
+  let released = false;
+  const sweep = new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      retained.release();
+      released = true;
+      resolve();
+    }, 150);
+    timer.unref();
+  });
+  trackSessionHistoryHostEffect(target, sweep);
+  onTestFinished(() => {
+    if (!released) {
+      retained.release();
+    }
+  });
   const removed = commitRoster(createHandlers(), roster(["main"]));
   await expect(finishedWithin(removed, 8_000)).resolves.toBe(true);
+  expect(released).toBe(true);
   expect(worker.database.db.isOpen).toBe(false);
-  expect(fs.existsSync(worker.path)).toBe(true);
   expect(fs.existsSync(`${worker.path}-wal`)).toBe(false);
   expect(fs.existsSync(`${worker.path}-shm`)).toBe(false);
 });

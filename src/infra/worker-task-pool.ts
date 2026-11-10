@@ -46,6 +46,11 @@ export class WorkerTaskPool<Input, Output> {
     return this.core.rotate();
   }
 
+  /** Real sqlite close for lanes that do not go through an owned pool. Does not terminate the worker. */
+  closeResources(key?: string): Promise<void> {
+    return this.core.startCloseResources(key).result;
+  }
+
   close(error?: Error, reason?: WorkerRetirementReason): Promise<void> {
     return this.core.close(error, reason);
   }

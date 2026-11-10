@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { hasAgentRosterProperty, listAgentIds } from "../agents/agent-roster.js";
 import { getRuntimeConfigSnapshot } from "../config/io.js";
@@ -8,7 +9,12 @@ import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.j
 
 let reconciliation: Promise<void> = Promise.resolve();
 const departedWorkAdmissions = new Map<string, () => void>();
-const pendingDepartedReleases = new Map<string, { cancelled: boolean }>();
+const pendingDepartedReleases = new Map<string, { cancelled: boolean; done: Promise<void> }>();
+
+/** Resolves when a deferred database release finishes. Idle removal has already closed. */
+export function waitForDepartedAgentDatabaseRelease(agentId: string): Promise<void> {
+  return pendingDepartedReleases.get(normalizeAgentId(agentId))?.done ?? Promise.resolve();
+}
 
 /** One roster publication at a time, so a later commit cannot lose to an older close. */
 function enqueueAgentDatabaseReconciliation(task: () => Promise<void>): Promise<void> {
@@ -158,6 +164,56 @@ async function releaseDepartedAgentDatabase(
   await closeDepartedAgentResources(normalized, previousConfig, nextConfig);
 }
 
+function departedDatabasePaths(
+  agentId: string,
+  canonical: string,
+  paths: {
+    resolveOpenClawAgentSqlitePath: (options: { agentId: string }) => string;
+    resolveIncognitoOpenClawAgentSqlitePath: (options: { agentId: string }) => string;
+  },
+): Set<string> {
+  const physical = new Set<string>();
+  for (const pathname of [
+    canonical,
+    paths.resolveOpenClawAgentSqlitePath({ agentId }),
+    paths.resolveIncognitoOpenClawAgentSqlitePath({ agentId }),
+  ]) {
+    const resolved = path.resolve(pathname);
+    physical.add(resolved);
+    try {
+      physical.add(fs.realpathSync(resolved));
+    } catch {
+      // The file may not exist yet. The lexical path still names its writer queue.
+    }
+  }
+  return physical;
+}
+
+/** Session-row, transcript, and history-worker writes can still be queued after the turn ends. */
+async function awaitDepartedDurableWrites(
+  agentId: string,
+  databasePaths: ReadonlySet<string>,
+): Promise<void> {
+  const [{ drainOpenClawAgentWriteQueues }, { awaitSessionHistoryWorkerIdle }] = await Promise.all([
+    import("../state/openclaw-agent-write-admission.js"),
+    import("../config/sessions/session-history-worker-idle.js"),
+  ]);
+  const ownsPath = (storePath: string) => {
+    const resolved = path.resolve(storePath);
+    if (databasePaths.has(resolved)) {
+      return true;
+    }
+    try {
+      return databasePaths.has(fs.realpathSync(resolved));
+    } catch {
+      return false;
+    }
+  };
+  await drainOpenClawAgentWriteQueues(ownsPath);
+  await awaitSessionHistoryWorkerIdle({ agentId, paths: [...databasePaths] });
+  await drainOpenClawAgentWriteQueues(ownsPath);
+}
+
 async function closeDepartedAgentResources(
   agentId: string,
   previousConfig: OpenClawConfig,
@@ -174,7 +230,7 @@ async function closeDepartedAgentResources(
     { closeActiveMemorySearchManagerCore },
     { retireSessionHistoryWorkerDatabases },
     paths,
-    { agentDatabaseLifecycle },
+    { agentDatabaseLifecycle, closeOpenClawAgentDatabaseByPathAsync },
     { closeDeletedAgentDatabases },
   ] = await Promise.all([
     import("../agents/agent-delete-databases.js"),
@@ -191,6 +247,11 @@ async function closeDepartedAgentResources(
     agentId: normalized,
     path: path.join(agentDir, "openclaw-agent.sqlite"),
   });
+  const durablePaths = departedDatabasePaths(normalized, canonical, paths);
+  await awaitDepartedDurableWrites(normalized, durablePaths);
+  if (liveAgentIds()?.has(normalized)) {
+    return;
+  }
   const openPaths = [...agentDatabaseLifecycle.databases.values()]
     .filter((database) => database.agentId === normalized && database.db.isOpen)
     .map((database) => database.path);
@@ -230,6 +291,17 @@ async function closeDepartedAgentResources(
     return;
   }
   await blockDepartedAgentWork(normalized);
+  if (liveAgentIds()?.has(normalized)) {
+    releaseDepartedWorkAdmission(normalized);
+    if (planningError) {
+      throw planningError;
+    }
+    return;
+  }
+  // Same close as Gateway shutdown: stop WAL maintenance, then TRUNCATE on the last handle.
+  for (const pathname of readerPaths) {
+    await closeOpenClawAgentDatabaseByPathAsync(pathname, normalized);
+  }
   if (liveAgentIds()?.has(normalized)) {
     releaseDepartedWorkAdmission(normalized);
     if (planningError) {
@@ -358,9 +430,11 @@ function deferDepartedAgentRelease(
   if (pendingDepartedReleases.has(agentId)) {
     return;
   }
-  const pending = { cancelled: false };
-  pendingDepartedReleases.set(agentId, pending);
-  void settled
+  const pending = {
+    cancelled: false,
+    done: Promise.resolve(),
+  };
+  pending.done = settled
     .then(async () => {
       if (pending.cancelled || pendingDepartedReleases.get(agentId) !== pending) {
         return;
@@ -382,6 +456,7 @@ function deferDepartedAgentRelease(
         pendingDepartedReleases.delete(agentId);
       }
     });
+  pendingDepartedReleases.set(agentId, pending);
 }
 
 /** Source work and Gateway terminal persistence can settle after effect release. */

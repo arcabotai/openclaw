@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -39,6 +40,7 @@ import { beginAgentDeletionJournal } from "../test-utils/agent-deletion-journal.
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import { buildGatewayReloadPlan } from "./config-reload-plan.js";
 import { createRecoveryRestartMock } from "./config-reload.test-support.js";
+import { waitForDepartedAgentDatabaseRelease } from "./server-reload-agent-databases.js";
 import {
   createHotReloadHandlerTestParams,
   createTestCronState,
@@ -122,16 +124,27 @@ function holderIds(): string[] {
   return listOpenClawAgentDatabasesForTest().map((database) => database.agentId);
 }
 
-async function waitForDepartedClose(agentId: string): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!holderIds().includes(agentId)) {
-      return;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10);
-    });
+function readClosedAgentDatabase(pathname: string): {
+  sessionKey: string | undefined;
+  transcript: string;
+} {
+  const db = new DatabaseSync(pathname, { readOnly: true });
+  try {
+    const node = db
+      .prepare("SELECT session_key FROM session_nodes WHERE session_key = ?")
+      .get("agent:worker:main") as { session_key: string } | undefined;
+    const events = db
+      .prepare(
+        "SELECT event_json FROM transcript_events WHERE session_id = ? AND event_json IS NOT NULL",
+      )
+      .all("worker-held-model") as Array<{ event_json: string }>;
+    return {
+      sessionKey: node?.session_key,
+      transcript: events.map((event) => event.event_json).join("\n"),
+    };
+  } finally {
+    db.close();
   }
-  throw new Error(`agent ${agentId} database stayed open`);
 }
 
 function readOnlyIdentityDescriptors(pathname: string): string[] {
@@ -308,8 +321,9 @@ it("keeps the database open until an in-flight turn finishes", async () => {
     expect(turn.isActive()).toBe(true);
     expect(worker.database.db.isOpen).toBe(true);
     expect(holderIds()).toContain("worker");
+    const closed = waitForDepartedAgentDatabaseRelease("worker");
     turn.release();
-    await waitForDepartedClose("worker");
+    await closed;
     expect(worker.database.db.isOpen).toBe(false);
     expect(fs.existsSync(worker.path)).toBe(true);
   } finally {
@@ -335,11 +349,10 @@ it("cancels a pending database release when the agent is re-added", async () => 
     const handlers = createHandlers();
     await commitRoster(handlers, roster(["main"]));
     expect(worker.database.db.isOpen).toBe(true);
+    const release = waitForDepartedAgentDatabaseRelease("worker");
     await commitRoster(handlers, roster(["main", "worker"]));
     turn.release();
-    await new Promise((resolve) => {
-      setTimeout(resolve, 30);
-    });
+    await release;
     expect(holderIds()).toContain("worker");
     expect(isDeletedAgentDatabasePath(worker.path)).toBe(false);
     expect(worker.database.db.isOpen).toBe(true);
@@ -470,9 +483,13 @@ it("lets a held embedded turn finish before closing its database", async () => {
   await prompt;
   expect(records).toContainEqual({ text: "STUB_OK", stopReason: "stop", open: true });
   expect(turnAborted).toBe(false);
-  await waitForDepartedClose("worker");
+  await waitForDepartedAgentDatabaseRelease("worker");
   expect(worker.database.db.isOpen).toBe(false);
   expect(fs.existsSync(worker.path)).toBe(true);
+  const persisted = readClosedAgentDatabase(worker.path);
+  expect(persisted.sessionKey).toBe("agent:worker:main");
+  expect(persisted.transcript).toContain("STUB_OK");
+  expect(persisted.transcript).toContain('"stopReason":"stop"');
 });
 
 it("clears the session-write block when cleanup fails and the agent is re-added", async () => {

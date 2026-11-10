@@ -9,7 +9,6 @@ import type { ImageContent, TextContent } from "../../llm/types.js";
 import { attachRuntimePromptMediaFacts, type MediaFact } from "../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import { readRuntimePromptImageFactIndexes } from "../../media/runtime-prompt-image-provenance.js";
-import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
 import { attachRuntimeUserTurnTranscriptContext } from "../../sessions/user-turn-transcript-runtime-context.js";
 import {
@@ -20,9 +19,7 @@ import type {
   PersistedUserTurnMessage,
   UserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.types.js";
-import { createDeferredCore } from "../../shared/deferred.js";
 import { notifyListeners } from "../../shared/listeners.js";
-import { trackEmbeddedAgentAttempt } from "../agent-attempt-settlement.js";
 import { attachSteeringRuntimeContext } from "../embedded-agent-runner/run/runtime-context-prompt.js";
 import {
   isOpenClawSystemUpdateMessage,
@@ -30,7 +27,6 @@ import {
   resolvePendingRuntimeContextReplay,
   type CurrentInboundPromptContext,
 } from "../internal-runtime-context.js";
-import { createAgentRunDirectAbortError } from "../run-termination.js";
 import type { AgentMessage } from "../runtime/index.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
 import { AgentSessionBase } from "./agent-session-base.js";
@@ -128,47 +124,29 @@ export abstract class AgentSessionPrompting extends AgentSessionBase {
     // still owns continuation and its one terminal fact until this scope closes.
     this.logicalPromptActive = true;
     let endedForTurnHandoff = false;
-    const agentId = parseAgentSessionKey(this.sessionKey ?? "")?.agentId;
-    const settled = createDeferredCore<void>();
-    // Reload joins this prompt, not the model-wait flag. Abort clears that flag
-    // immediately; the loop still appends the aborted transcript after the stream returns.
-    const releaseAttempt = agentId
-      ? trackEmbeddedAgentAttempt({
-          agentId,
-          abort: () => {
-            this.agent.abort(createAgentRunDirectAbortError());
-          },
-          settled: settled.promise,
-        })
-      : undefined;
     try {
-      try {
-        await this.runPreparedAgentLoop(() => this.agent.prompt(messages));
-        while (true) {
-          const action = await this.handlePostAgentRun();
-          if (action !== "continue") {
-            endedForTurnHandoff = action === "handoff";
-            break;
-          }
-          await this.runPreparedAgentLoop(() => this.agent.continue());
+      await this.runPreparedAgentLoop(() => this.agent.prompt(messages));
+      while (true) {
+        const action = await this.handlePostAgentRun();
+        if (action !== "continue") {
+          endedForTurnHandoff = action === "handoff";
+          break;
         }
-      } finally {
-        this.systemPromptOverride = undefined;
-        this.logicalPromptActive = false;
-        // Consume handoff state before callbacks can start a nested run and set it again.
-        endedForTurnHandoff ||= this.lastRunEndedForTurnHandoff;
-        this.lastRunEndedForTurnHandoff = false;
-        // Failed or aborted runs can still be idle; only handoff leaves external delivery pending.
-        if (endedForTurnHandoff) {
-          this.emit({ type: "agent_handoff" });
-        } else {
-          this.emit({ type: "agent_settled" });
-          await this.currentExtensionRunner.emit({ type: "agent_settled" });
-        }
+        await this.runPreparedAgentLoop(() => this.agent.continue());
       }
     } finally {
-      settled.resolve();
-      releaseAttempt?.();
+      this.systemPromptOverride = undefined;
+      this.logicalPromptActive = false;
+      // Consume handoff state before callbacks can start a nested run and set it again.
+      endedForTurnHandoff ||= this.lastRunEndedForTurnHandoff;
+      this.lastRunEndedForTurnHandoff = false;
+      // Failed or aborted runs can still be idle; only handoff leaves external delivery pending.
+      if (endedForTurnHandoff) {
+        this.emit({ type: "agent_handoff" });
+      } else {
+        this.emit({ type: "agent_settled" });
+        await this.currentExtensionRunner.emit({ type: "agent_settled" });
+      }
     }
   }
 

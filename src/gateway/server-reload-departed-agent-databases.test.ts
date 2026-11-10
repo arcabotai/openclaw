@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import {
+  attachActiveEmbeddedRun,
+  detachActiveEmbeddedRun,
+} from "../agents/embedded-agent-runner/runs.js";
+import { createEmbeddedRunHandle } from "../agents/embedded-agent-runner/runs.test-support.js";
 import { createResourceLoader } from "../agents/sessions/agent-session-loop-resource-loader.test-support.js";
 import { AuthStorage } from "../agents/sessions/auth-storage.js";
 import { ModelRegistry } from "../agents/sessions/model-registry.js";
@@ -24,11 +29,7 @@ import {
   assertAgentSessionWriteAdmission,
   sessionWorkAdmissionClosures,
 } from "../sessions/session-agent-work-admission.js";
-import {
-  beginSessionEffect,
-  captureSessionTarget,
-} from "../sessions/session-controller.lifecycle.js";
-import { resetSessionControllerStateForTest } from "../sessions/session-lifecycle-admission.test-support.js";
+import { beginSessionEffect } from "../sessions/session-controller.lifecycle.js";
 import { useAgentDatabaseDirectories } from "../state/openclaw-agent-db-lifecycle.test-support.js";
 import { hasOpenClawAgentDatabaseAsyncResources } from "../state/openclaw-agent-db-resources.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
@@ -36,7 +37,6 @@ import { resolveOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.paths
 import { listOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.test-support.js";
 import { beginAgentDeletionJournal } from "../test-utils/agent-deletion-journal.js";
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
-import { registerChatAbortController } from "./chat-abort.js";
 import { buildGatewayReloadPlan } from "./config-reload-plan.js";
 import { createRecoveryRestartMock } from "./config-reload.test-support.js";
 import {
@@ -120,6 +120,18 @@ async function commitRoster(
 
 function holderIds(): string[] {
   return listOpenClawAgentDatabasesForTest().map((database) => database.agentId);
+}
+
+async function waitForDepartedClose(agentId: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (!holderIds().includes(agentId)) {
+      return;
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+  throw new Error(`agent ${agentId} database stayed open`);
 }
 
 function readOnlyIdentityDescriptors(pathname: string): string[] {
@@ -277,14 +289,12 @@ it("leaves a journaled agents.delete cleanup in charge of the open database", as
   expect(() => assertAgentSessionWriteAdmission({ agentId: "worker", env })).not.toThrow();
 });
 
-it("settles an active turn before closing the removed agent's database", async () => {
+it("keeps the database open until an in-flight turn finishes", async () => {
   const { opened } = installState(["main", "worker"]);
   const worker = opened.find((database) => database.agentId === "worker");
   if (!worker) {
     throw new Error("fixture did not open worker");
   }
-  const interrupted = createDeferred();
-  let openWhenInterrupted = false;
   const turn = await beginSessionEffect({
     agentId: "worker",
     env: process.env,
@@ -292,93 +302,53 @@ it("settles an active turn before closing the removed agent's database", async (
     identities: ["agent:worker:live"],
     owner: Symbol("live-turn"),
     assertAllowed: () => {},
-    onInterrupt: () => {
-      openWhenInterrupted = worker.database.db.isOpen;
-      interrupted.resolve();
-      turn.release();
-    },
-  });
-  const removal = commitRoster(createHandlers(), roster(["main"]));
-  const winner = await Promise.race([
-    interrupted.promise.then(() => "interrupted" as const),
-    removal.then(() => "closed" as const),
-  ]);
-  expect(winner).toBe("interrupted");
-  expect(openWhenInterrupted).toBe(true);
-  await removal;
-  expect(holderIds()).not.toContain("worker");
-  expect(isDeletedAgentDatabasePath(worker.path)).toBe(true);
-});
-
-it("persists a held model turn's terminal session write before closing its database", async () => {
-  const { opened } = installState(["main", "worker"]);
-  const worker = opened.find((database) => database.agentId === "worker");
-  if (!worker) {
-    throw new Error("fixture did not open worker");
-  }
-  const terminalWrite = createDeferred<void>();
-  let writeError: unknown;
-  let openDuringWrite = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  registerChatAbortController({
-    target: captureSessionTarget({
-      storeScope: worker.path,
-      sessionKey: "agent:worker:main",
-      incarnation: "worker-session",
-      agentId: "worker",
-    }),
-    runId: "worker-held-model",
-    sessionId: "worker-session",
-    sessionKey: "agent:worker:main",
-    agentId: "worker",
-    timeoutMs: 60_000,
-    // The Gateway tracks this promise on the run source. It outlives effect release.
-    sourceWork: terminalWrite.promise,
-  });
-  onTestFinished(() => {
-    if (timer) {
-      clearTimeout(timer);
-    }
-    terminalWrite.resolve();
-    resetSessionControllerStateForTest();
-  });
-  const turn = await beginSessionEffect({
-    agentId: "worker",
-    env: process.env,
-    scope: worker.path,
-    identities: ["agent:worker:main"],
-    owner: Symbol("held-model"),
-    assertAllowed: () => {},
-    onInterrupt: () => {
-      // Abort releases the session effect before the held model call returns.
-      turn.release();
-      timer = setTimeout(() => {
-        void (async () => {
-          try {
-            assertAgentSessionWriteAdmission({ agentId: "worker", env: process.env });
-            openDuringWrite = worker.database.db.isOpen;
-            worker.database.db.exec("PRAGMA user_version = 7");
-          } catch (error) {
-            writeError = error;
-          } finally {
-            terminalWrite.resolve();
-          }
-        })();
-      }, 0);
-    },
   });
   try {
     await commitRoster(createHandlers(), roster(["main"]));
-    expect(writeError).toBeUndefined();
-    expect(openDuringWrite).toBe(true);
-    expect(holderIds()).not.toContain("worker");
-    expect(isDeletedAgentDatabasePath(worker.path)).toBe(true);
+    expect(turn.isActive()).toBe(true);
+    expect(worker.database.db.isOpen).toBe(true);
+    expect(holderIds()).toContain("worker");
+    turn.release();
+    await waitForDepartedClose("worker");
+    expect(worker.database.db.isOpen).toBe(false);
+    expect(fs.existsSync(worker.path)).toBe(true);
   } finally {
     turn.release();
   }
 });
 
-it("commits the aborted transcript before closing a database under a held provider stream", async () => {
+it("cancels a pending database release when the agent is re-added", async () => {
+  const { opened } = installState(["main", "worker"]);
+  const worker = opened.find((database) => database.agentId === "worker");
+  if (!worker) {
+    throw new Error("fixture did not open worker");
+  }
+  const turn = await beginSessionEffect({
+    agentId: "worker",
+    env: process.env,
+    scope: worker.path,
+    identities: ["agent:worker:returning"],
+    owner: Symbol("returning-turn"),
+    assertAllowed: () => {},
+  });
+  try {
+    const handlers = createHandlers();
+    await commitRoster(handlers, roster(["main"]));
+    expect(worker.database.db.isOpen).toBe(true);
+    await commitRoster(handlers, roster(["main", "worker"]));
+    turn.release();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30);
+    });
+    expect(holderIds()).toContain("worker");
+    expect(isDeletedAgentDatabasePath(worker.path)).toBe(false);
+    expect(worker.database.db.isOpen).toBe(true);
+  } finally {
+    turn.release();
+  }
+});
+
+it("lets a held embedded turn finish before closing its database", async () => {
   const { opened } = installState(["main", "worker"]);
   const worker = opened.find((database) => database.agentId === "worker");
   if (!worker) {
@@ -392,6 +362,17 @@ it("commits the aborted transcript before closing a database under a held provid
   };
   await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
   const held = createDeferred<void>();
+  const releaseHold = createDeferred<void>();
+  const streamAbort = new AbortController();
+  const sessionId = "worker-held-model";
+  const handle = createEmbeddedRunHandle({
+    runId: "held-embedded-turn",
+    abort: () => streamAbort.abort(),
+  });
+  attachActiveEmbeddedRun(sessionId, handle, undefined, undefined, "worker");
+  onTestFinished(() => {
+    detachActiveEmbeddedRun(sessionId, handle);
+  });
   const model = makeProviderModelFixture({
     id: "held-model",
     provider: "held-provider",
@@ -406,28 +387,37 @@ it("commits the aborted transcript before closing a database under a held provid
     streamSimple: (_model, _context, options) => {
       const stream = createAssistantMessageEventStream();
       held.resolve();
-      const finish = () => {
-        stream.push({
-          type: "error",
-          reason: "aborted",
-          error: {
-            role: "assistant",
-            content: [{ type: "text", text: "" }],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            stopReason: "aborted",
-            errorMessage: "aborted",
-            timestamp: 1,
-            usage: createZeroUsageFixture(),
-          },
-        });
+      let finished = false;
+      const finish = (outcome: "completed" | "aborted") => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        const message = {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: outcome === "completed" ? "STUB_OK" : "" }],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          stopReason: outcome === "completed" ? ("stop" as const) : ("aborted" as const),
+          timestamp: 1,
+          usage: createZeroUsageFixture(),
+        };
+        if (outcome === "completed") {
+          stream.push({ type: "done", reason: "stop", message });
+        } else {
+          stream.push({ type: "error", reason: "aborted", error: message });
+        }
         stream.end();
       };
-      if (options?.signal?.aborted) {
-        finish();
+      const signal = options?.signal;
+      const abort = () => finish("aborted");
+      if (signal?.aborted || streamAbort.signal.aborted) {
+        abort();
       } else {
-        options?.signal?.addEventListener("abort", finish, { once: true });
+        signal?.addEventListener("abort", abort, { once: true });
+        streamAbort.signal.addEventListener("abort", abort, { once: true });
+        void releaseHold.promise.then(() => finish("completed"));
       }
       return stream;
     },
@@ -450,36 +440,38 @@ it("commits the aborted transcript before closing a database under a held provid
     void session.abort().catch(() => undefined);
     void session.dispose();
   });
-  const records: Array<{ kind: "assistant" | "turn-aborted"; open: boolean }> = [];
+  const records: Array<{ text: string; stopReason: string; open: boolean }> = [];
+  let turnAborted = false;
   session.subscribe((event) => {
     if (event.type !== "message_end") {
       return;
     }
     const message = event.message;
-    const open = worker.database.db.isOpen;
-    if (message.role === "assistant" && message.stopReason === "aborted") {
-      records.push({ kind: "assistant", open });
+    if (message.role === "assistant") {
+      const text = message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+      records.push({
+        text,
+        stopReason: message.stopReason,
+        open: worker.database.db.isOpen,
+      });
     }
     if (message.role === "custom" && message.customType === "openclaw:turn-aborted") {
-      records.push({ kind: "turn-aborted", open });
+      turnAborted = true;
     }
   });
-  const prompt = session.prompt("active-held-inspect");
-  const promptSettled = prompt.then(
-    () => "persisted" as const,
-    () => "persisted" as const,
-  );
+  const prompt = session.prompt("active-held-inspect").finally(() => {
+    detachActiveEmbeddedRun(sessionId, handle);
+  });
   await held.promise;
-  const removal = commitRoster(createHandlers(), roster(["main"]));
-  const outcome = await Promise.race([promptSettled, removal.then(() => "closed" as const)]);
-  await removal;
-  expect(outcome).toBe("persisted");
-  expect(records).toEqual([
-    { kind: "assistant", open: true },
-    { kind: "turn-aborted", open: true },
-  ]);
-  expect(holderIds()).not.toContain("worker");
-  expect(isDeletedAgentDatabasePath(worker.path)).toBe(true);
+  await commitRoster(createHandlers(), roster(["main"]));
+  expect(worker.database.db.isOpen).toBe(true);
+  expect(holderIds()).toContain("worker");
+  releaseHold.resolve();
+  await prompt;
+  expect(records).toContainEqual({ text: "STUB_OK", stopReason: "stop", open: true });
+  expect(turnAborted).toBe(false);
+  await waitForDepartedClose("worker");
+  expect(worker.database.db.isOpen).toBe(false);
   expect(fs.existsSync(worker.path)).toBe(true);
 });
 

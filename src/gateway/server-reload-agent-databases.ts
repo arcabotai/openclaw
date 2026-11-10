@@ -8,6 +8,7 @@ import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.j
 
 let reconciliation: Promise<void> = Promise.resolve();
 const departedWorkAdmissions = new Map<string, () => void>();
+const pendingDepartedReleases = new Map<string, { cancelled: boolean }>();
 
 /** One roster publication at a time, so a later commit cannot lose to an older close. */
 function enqueueAgentDatabaseReconciliation(task: () => Promise<void>): Promise<void> {
@@ -64,9 +65,13 @@ export async function reconcileAgentDatabasesAfterConfigCommit(params: {
 }): Promise<void> {
   const { previousConfig, nextConfig, warn } = params;
   await enqueueAgentDatabaseReconciliation(async () => {
+    const admitted = admittedAgentIds(previousConfig, nextConfig);
+    for (const agentId of admitted) {
+      cancelPendingDepartedRelease(agentId);
+    }
     try {
       for (const agentId of explicitAgentIds(previousConfig)) {
-        if (admittedAgentIds(previousConfig, nextConfig).has(agentId)) {
+        if (admitted.has(agentId)) {
           continue;
         }
         if (await agentDeletionOwnsCleanup(agentId)) {
@@ -76,7 +81,7 @@ export async function reconcileAgentDatabasesAfterConfigCommit(params: {
           continue;
         }
         try {
-          await releaseDepartedAgentDatabase(agentId, previousConfig, nextConfig);
+          await releaseDepartedAgentDatabase(agentId, previousConfig, nextConfig, warn);
         } catch (error) {
           warn(
             `agent ${agentId} left the roster; database release failed: ${formatErrorMessage(error)}. Restart the Gateway before deleting that agent's files.`,
@@ -84,7 +89,7 @@ export async function reconcileAgentDatabasesAfterConfigCommit(params: {
         }
       }
     } finally {
-      releaseAdmittedWorkClosures(admittedAgentIds(previousConfig, nextConfig));
+      releaseAdmittedWorkClosures(admitted);
     }
     await reviveAgentDatabases(
       listAgentIds(nextConfig).filter((agentId) =>
@@ -141,20 +146,35 @@ async function releaseDepartedAgentDatabase(
   agentId: string,
   previousConfig: OpenClawConfig,
   nextConfig: OpenClawConfig,
+  warn: (message: string) => void,
 ): Promise<void> {
   const normalized = normalizeAgentId(agentId);
-  // The interrupted turn persists before new writes are refused. Closing
-  // admission first rejects that terminal write with our own fence.
-  await drainDepartedAgentWork(normalized);
-  await blockDepartedAgentWork(normalized);
+  const running = await captureDepartedAgentWork(normalized);
+  if (running) {
+    // Reload stays unblocked. The turn finishes on its own, then the database closes.
+    deferDepartedAgentRelease(normalized, running.settled, previousConfig, nextConfig, warn);
+    return;
+  }
+  await closeDepartedAgentResources(normalized, previousConfig, nextConfig);
+}
+
+async function closeDepartedAgentResources(
+  agentId: string,
+  previousConfig: OpenClawConfig,
+  nextConfig: OpenClawConfig,
+): Promise<void> {
+  const normalized = normalizeAgentId(agentId);
+  if (liveAgentIds()?.has(normalized)) {
+    return;
+  }
   const [
-    { prepareAgentDeleteDatabases, isPathOwnedBySurvivingAgent },
+    { prepareAgentDeleteDatabases },
     { resolveEffectiveAgentDir },
     { retirePreparedModelRuntimeAgent },
     { closeActiveMemorySearchManagerCore },
     { retireSessionHistoryWorkerDatabases },
     paths,
-    { closeOpenClawAgentDatabaseByPathAsync },
+    { agentDatabaseLifecycle },
     { closeDeletedAgentDatabases },
   ] = await Promise.all([
     import("../agents/agent-delete-databases.js"),
@@ -171,6 +191,9 @@ async function releaseDepartedAgentDatabase(
     agentId: normalized,
     path: path.join(agentDir, "openclaw-agent.sqlite"),
   });
+  const openPaths = [...agentDatabaseLifecycle.databases.values()]
+    .filter((database) => database.agentId === normalized && database.db.isOpen)
+    .map((database) => database.path);
   await retireSessionHistoryWorkerDatabases({
     agentId: normalized,
     paths: [
@@ -181,23 +204,34 @@ async function releaseDepartedAgentDatabase(
   });
   await closeActiveMemorySearchManagerCore({ cfg: previousConfig, agentId: normalized });
 
-  let readerPaths = [canonical];
+  let readerPaths = [
+    ...new Set([
+      canonical,
+      paths.resolveOpenClawAgentSqlitePath({ agentId: normalized }),
+      ...openPaths,
+    ]),
+  ];
   let agentDirs = [agentDir];
   let planningError: Error | undefined;
   try {
     const plan = await prepareAgentDeleteDatabases(nextConfig, normalized, agentDir);
     if (plan.readerPaths.length > 0) {
-      readerPaths = plan.readerPaths;
+      readerPaths = [...new Set([...readerPaths, ...plan.readerPaths])];
     }
     agentDirs = plan.agentDirs;
   } catch (error) {
     planningError = error instanceof Error ? error : new Error(formatErrorMessage(error));
-    if (!isPathOwnedBySurvivingAgent(nextConfig, normalized, canonical)) {
-      await closeOpenClawAgentDatabaseByPathAsync(canonical, normalized);
-    }
   }
   await retirePreparedModelRuntimeAgent({ agentId: normalized, agentDirs });
   if (liveAgentIds()?.has(normalized)) {
+    if (planningError) {
+      throw planningError;
+    }
+    return;
+  }
+  await blockDepartedAgentWork(normalized);
+  if (liveAgentIds()?.has(normalized)) {
+    releaseDepartedWorkAdmission(normalized);
     if (planningError) {
       throw planningError;
     }
@@ -218,7 +252,7 @@ async function releaseDepartedAgentDatabase(
   }
 }
 
-/** New session writes stop after the interrupted turn has persisted. */
+/** New session writes stop once the departed agent's current turn has finished. */
 async function blockDepartedAgentWork(agentId: string): Promise<void> {
   if (departedWorkAdmissions.has(agentId)) {
     return;
@@ -269,76 +303,85 @@ function releaseAdmittedWorkClosures(admitted: ReadonlySet<string>): void {
   }
 }
 
+function cancelPendingDepartedRelease(agentId: string): void {
+  const pending = pendingDepartedReleases.get(normalizeAgentId(agentId));
+  if (!pending) {
+    return;
+  }
+  pending.cancelled = true;
+  pendingDepartedReleases.delete(normalizeAgentId(agentId));
+}
+
 /**
- * agents.delete interrupts running turns, lets their terminal session writes
- * land, and only then closes admission. Effect release and the model-wait flag
- * can clear while the provider stream and its aborted transcript appends are
- * still in flight, so this also joins embedded runs and the live prompt.
- * A turn that ignores abort keeps its database open after the bounded wait.
+ * In-flight embedded runs and acquired turns keep the database. Nothing here
+ * aborts them: config removal already refuses new turns, and the current turn
+ * persists the same way it does on main.
  */
-async function drainDepartedAgentWork(agentId: string): Promise<void> {
+async function captureDepartedAgentWork(
+  agentId: string,
+): Promise<{ settled: Promise<void> } | undefined> {
   const [
-    { startAgentWorkAdmissionInterruption, SESSION_CONTROLLER_DRAIN_TIMEOUT_MS },
-    { createAgentRunDirectAbortError },
+    { captureAgentWorkAdmissionSettlement },
     { nativeAttemptAttachments },
     { captureEmbeddedRunDrainTarget },
-    { listEmbeddedAgentAttempts },
-    { settlesWithin },
   ] = await Promise.all([
     import("../sessions/session-controller.lifecycle.js"),
-    import("../agents/run-termination.js"),
     import("../agents/embedded-agent-runner/run-state.js"),
     import("../agents/embedded-agent-runner/runs.js"),
-    import("../agents/agent-attempt-settlement.js"),
-    import("../shared/settle-within.js"),
   ]);
   const runs: Array<NonNullable<ReturnType<typeof captureEmbeddedRunDrainTarget>>> = [];
   for (const attachment of nativeAttemptAttachments()) {
     const run = captureEmbeddedRunDrainTarget(attachment, { agentId });
-    if (run) {
+    if (run?.isActive()) {
       runs.push(run);
     }
   }
-  const prompts = listEmbeddedAgentAttempts(agentId);
-  const interruption = startAgentWorkAdmissionInterruption({
-    agentId,
-    reason: createAgentRunDirectAbortError(),
-    assertCurrent: () => {
-      if (liveAgentIds()?.has(agentId)) {
-        throw new Error(`Agent ${agentId} returned to the roster during work drain.`);
-      }
-    },
-  });
-  try {
-    for (const run of runs) {
-      run.abort();
-    }
-    for (const prompt of prompts) {
-      prompt.abort();
-    }
-    const finished = await settlesWithin(
-      Promise.all([
-        interruption.released,
-        ...runs.map(async (run) => {
-          if (!(await run.waitForEnd(SESSION_CONTROLLER_DRAIN_TIMEOUT_MS))) {
-            throw new Error(
-              `Agent ${agentId} model turn did not finish after abort. Its database stays open.`,
-            );
-          }
-        }),
-        ...prompts.map((prompt) => prompt.settled),
-      ]),
-      SESSION_CONTROLLER_DRAIN_TIMEOUT_MS,
-    );
-    if (!finished) {
-      throw new Error(`Agent ${agentId} turn did not finish after abort. Its database stays open.`);
-    }
-    await awaitDepartedTerminalPersistence(agentId);
-  } finally {
-    for (const run of runs) {
-      run.release();
-    }
+  const effects = captureAgentWorkAdmissionSettlement({ agentId });
+  if (!runs.length && !effects.pending) {
+    return undefined;
   }
+  return {
+    settled: Promise.all([
+      ...runs.map((run) => run.waitForEnd(null).finally(() => run.release())),
+      ...(effects.pending ? [effects.released] : []),
+    ]).then(() => awaitDepartedTerminalPersistence(agentId)),
+  };
+}
+
+function deferDepartedAgentRelease(
+  agentId: string,
+  settled: Promise<void>,
+  previousConfig: OpenClawConfig,
+  nextConfig: OpenClawConfig,
+  warn: (message: string) => void,
+): void {
+  if (pendingDepartedReleases.has(agentId)) {
+    return;
+  }
+  const pending = { cancelled: false };
+  pendingDepartedReleases.set(agentId, pending);
+  void settled
+    .then(async () => {
+      if (pending.cancelled || pendingDepartedReleases.get(agentId) !== pending) {
+        return;
+      }
+      if (liveAgentIds()?.has(agentId)) {
+        return;
+      }
+      await closeDepartedAgentResources(agentId, previousConfig, nextConfig);
+    })
+    .catch((error: unknown) => {
+      if (!pending.cancelled) {
+        warn(
+          `agent ${agentId} left the roster; database release failed: ${formatErrorMessage(error)}. Restart the Gateway before deleting that agent's files.`,
+        );
+      }
+    })
+    .finally(() => {
+      if (pendingDepartedReleases.get(agentId) === pending) {
+        pendingDepartedReleases.delete(agentId);
+      }
+    });
 }
 
 /** Source work and Gateway terminal persistence can settle after effect release. */

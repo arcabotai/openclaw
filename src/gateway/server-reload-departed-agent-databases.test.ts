@@ -2,14 +2,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { createResourceLoader } from "../agents/sessions/agent-session-loop-resource-loader.test-support.js";
+import { AuthStorage } from "../agents/sessions/auth-storage.js";
+import { ModelRegistry } from "../agents/sessions/model-registry.js";
+import { createAgentSession } from "../agents/sessions/sdk.js";
+import { SessionManager } from "../agents/sessions/session-manager.js";
+import { SettingsManager } from "../agents/sessions/settings-manager.js";
+import { makeProviderModelFixture } from "../agents/test-helpers/provider-model-fixture.js";
+import { createZeroUsageFixture } from "../agents/test-helpers/usage-fixtures.js";
 import {
   clearRuntimeConfigSnapshot,
   getRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
+import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isDeletedAgentDatabasePath } from "../infra/agent-database-readers.js";
 import { retainSqliteDatabaseAdmissionLocation } from "../infra/sqlite-database-admission.js";
+import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
 import {
   assertAgentSessionWriteAdmission,
   sessionWorkAdmissionClosures,
@@ -366,6 +376,111 @@ it("persists a held model turn's terminal session write before closing its datab
   } finally {
     turn.release();
   }
+});
+
+it("commits the aborted transcript before closing a database under a held provider stream", async () => {
+  const { opened } = installState(["main", "worker"]);
+  const worker = opened.find((database) => database.agentId === "worker");
+  if (!worker) {
+    throw new Error("fixture did not open worker");
+  }
+  const target = {
+    agentId: "worker",
+    sessionId: "worker-held-model",
+    sessionKey: "agent:worker:main",
+    storePath: worker.path,
+  };
+  await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
+  const held = createDeferred<void>();
+  const model = makeProviderModelFixture({
+    id: "held-model",
+    provider: "held-provider",
+    api: "openai-responses",
+    baseUrl: "https://example.test",
+  });
+  const authStorage = AuthStorage.inMemory();
+  authStorage.setRuntimeApiKey(model.provider, "test-api-key");
+  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  modelRegistry.registerProvider(model.provider, {
+    api: model.api,
+    streamSimple: (_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      held.resolve();
+      const finish = () => {
+        stream.push({
+          type: "error",
+          reason: "aborted",
+          error: {
+            role: "assistant",
+            content: [{ type: "text", text: "" }],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            stopReason: "aborted",
+            errorMessage: "aborted",
+            timestamp: 1,
+            usage: createZeroUsageFixture(),
+          },
+        });
+        stream.end();
+      };
+      if (options?.signal?.aborted) {
+        finish();
+      } else {
+        options?.signal?.addEventListener("abort", finish, { once: true });
+      }
+      return stream;
+    },
+  });
+  const { session } = await createAgentSession({
+    cwd: path.dirname(worker.path),
+    systemPrompt: "Test session prompt",
+    model,
+    thinkingLevel: "off",
+    tools: [],
+    sessionManager: SessionManager.open(target, path.dirname(worker.path)),
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    }),
+    modelRegistry,
+    resourceLoader: await createResourceLoader(),
+  });
+  onTestFinished(() => {
+    void session.abort().catch(() => undefined);
+    void session.dispose();
+  });
+  const records: Array<{ kind: "assistant" | "turn-aborted"; open: boolean }> = [];
+  session.subscribe((event) => {
+    if (event.type !== "message_end") {
+      return;
+    }
+    const message = event.message;
+    const open = worker.database.db.isOpen;
+    if (message.role === "assistant" && message.stopReason === "aborted") {
+      records.push({ kind: "assistant", open });
+    }
+    if (message.role === "custom" && message.customType === "openclaw:turn-aborted") {
+      records.push({ kind: "turn-aborted", open });
+    }
+  });
+  const prompt = session.prompt("active-held-inspect");
+  const promptSettled = prompt.then(
+    () => "persisted" as const,
+    () => "persisted" as const,
+  );
+  await held.promise;
+  const removal = commitRoster(createHandlers(), roster(["main"]));
+  const outcome = await Promise.race([promptSettled, removal.then(() => "closed" as const)]);
+  await removal;
+  expect(outcome).toBe("persisted");
+  expect(records).toEqual([
+    { kind: "assistant", open: true },
+    { kind: "turn-aborted", open: true },
+  ]);
+  expect(holderIds()).not.toContain("worker");
+  expect(isDeletedAgentDatabasePath(worker.path)).toBe(true);
+  expect(fs.existsSync(worker.path)).toBe(true);
 });
 
 it("clears the session-write block when cleanup fails and the agent is re-added", async () => {

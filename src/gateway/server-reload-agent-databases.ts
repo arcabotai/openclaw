@@ -271,21 +271,26 @@ function releaseAdmittedWorkClosures(admitted: ReadonlySet<string>): void {
 
 /**
  * agents.delete interrupts running turns, lets their terminal session writes
- * land, and only then closes admission. Effect release can precede that write:
- * abort clears the model wait while the call and its persistence are still in
- * flight, so this also joins embedded runs and source-tracked persistence.
+ * land, and only then closes admission. Effect release and the model-wait flag
+ * can clear while the provider stream and its aborted transcript appends are
+ * still in flight, so this also joins embedded runs and the live prompt.
+ * A turn that ignores abort keeps its database open after the bounded wait.
  */
 async function drainDepartedAgentWork(agentId: string): Promise<void> {
   const [
-    { startAgentWorkAdmissionInterruption },
+    { startAgentWorkAdmissionInterruption, SESSION_CONTROLLER_DRAIN_TIMEOUT_MS },
     { createAgentRunDirectAbortError },
     { nativeAttemptAttachments },
     { captureEmbeddedRunDrainTarget },
+    { listEmbeddedAgentAttempts },
+    { settlesWithin },
   ] = await Promise.all([
     import("../sessions/session-controller.lifecycle.js"),
     import("../agents/run-termination.js"),
     import("../agents/embedded-agent-runner/run-state.js"),
     import("../agents/embedded-agent-runner/runs.js"),
+    import("../agents/agent-attempt-settlement.js"),
+    import("../shared/settle-within.js"),
   ]);
   const runs: Array<NonNullable<ReturnType<typeof captureEmbeddedRunDrainTarget>>> = [];
   for (const attachment of nativeAttemptAttachments()) {
@@ -294,6 +299,7 @@ async function drainDepartedAgentWork(agentId: string): Promise<void> {
       runs.push(run);
     }
   }
+  const prompts = listEmbeddedAgentAttempts(agentId);
   const interruption = startAgentWorkAdmissionInterruption({
     agentId,
     reason: createAgentRunDirectAbortError(),
@@ -307,7 +313,26 @@ async function drainDepartedAgentWork(agentId: string): Promise<void> {
     for (const run of runs) {
       run.abort();
     }
-    await Promise.all([interruption.released, ...runs.map((run) => run.waitForEnd(null))]);
+    for (const prompt of prompts) {
+      prompt.abort();
+    }
+    const finished = await settlesWithin(
+      Promise.all([
+        interruption.released,
+        ...runs.map(async (run) => {
+          if (!(await run.waitForEnd(SESSION_CONTROLLER_DRAIN_TIMEOUT_MS))) {
+            throw new Error(
+              `Agent ${agentId} model turn did not finish after abort. Its database stays open.`,
+            );
+          }
+        }),
+        ...prompts.map((prompt) => prompt.settled),
+      ]),
+      SESSION_CONTROLLER_DRAIN_TIMEOUT_MS,
+    );
+    if (!finished) {
+      throw new Error(`Agent ${agentId} turn did not finish after abort. Its database stays open.`);
+    }
     await awaitDepartedTerminalPersistence(agentId);
   } finally {
     for (const run of runs) {

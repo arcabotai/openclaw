@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { setImmediate } from "node:timers/promises";
 import { hasAgentRosterProperty, listAgentIds } from "../agents/agent-roster.js";
 import { getRuntimeConfigSnapshot } from "../config/io.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -214,6 +216,76 @@ async function awaitDepartedDurableWrites(
   await drainOpenClawAgentWriteQueues(ownsPath);
 }
 
+/** Worker-maintained close() skips TRUNCATE. Run it on this handle while it is still open. */
+async function checkpointOpenDepartedDatabase(pathname: string, agentId: string): Promise<void> {
+  const { agentDatabaseLifecycle } = await import("../state/openclaw-agent-db-lifecycle.js");
+  const resolved = path.resolve(pathname);
+  for (;;) {
+    if (liveAgentIds()?.has(agentId)) {
+      return;
+    }
+    const database = agentDatabaseLifecycle.databases.get(resolved);
+    if (!database?.db.isOpen) {
+      return;
+    }
+    if (database.walMaintenance.checkpoint()) {
+      return;
+    }
+    await setImmediate();
+  }
+}
+
+/** A peer that closed after the handle can leave -wal/-shm. Finish the same unlink shutdown gets. */
+async function finishDepartedWalCheckpoint(pathname: string, agentId: string): Promise<void> {
+  const resolved = path.resolve(pathname);
+  const wal = `${resolved}-wal`;
+  const shm = `${resolved}-shm`;
+  if (!fs.existsSync(resolved)) {
+    return;
+  }
+  for (;;) {
+    if (liveAgentIds()?.has(agentId)) {
+      return;
+    }
+    const walSize = fs.statSync(wal, { throwIfNoEntry: false })?.size;
+    if (walSize === undefined && !fs.existsSync(shm)) {
+      return;
+    }
+    const db = new DatabaseSync(resolved);
+    let complete = false;
+    try {
+      const row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE);").get() as
+        | Record<string, unknown>
+        | undefined;
+      const values = Object.values(row ?? {}).map((value) => Number(value));
+      const busy = values[0] ?? 1;
+      const logFrames = values[1] ?? -1;
+      const checkpointed = values[2] ?? -1;
+      complete = busy === 0 && checkpointed >= logFrames && logFrames >= 0;
+    } finally {
+      db.close();
+    }
+    if (
+      complete &&
+      (fs.statSync(wal, { throwIfNoEntry: false })?.size ?? 0) === 0 &&
+      !fs.existsSync(shm)
+    ) {
+      fs.rmSync(wal, { force: true });
+      return;
+    }
+    if (!complete) {
+      await setImmediate();
+      continue;
+    }
+    fs.rmSync(wal, { force: true });
+    fs.rmSync(shm, { force: true });
+    if (!fs.existsSync(wal) && !fs.existsSync(shm)) {
+      return;
+    }
+    await setImmediate();
+  }
+}
+
 async function closeDepartedAgentResources(
   agentId: string,
   previousConfig: OpenClawConfig,
@@ -228,7 +300,7 @@ async function closeDepartedAgentResources(
     { resolveEffectiveAgentDir },
     { retirePreparedModelRuntimeAgent },
     { closeActiveMemorySearchManagerCore },
-    { retireSessionHistoryWorkerDatabases },
+    { releaseSessionHistoryWorkerDatabases },
     paths,
     { agentDatabaseLifecycle, closeOpenClawAgentDatabaseByPathAsync },
     { closeDeletedAgentDatabases },
@@ -237,7 +309,7 @@ async function closeDepartedAgentResources(
     import("../agents/agent-scope-config.js"),
     import("../agents/prepared-model-runtime.js"),
     import("../plugins/memory-runtime.js"),
-    import("../config/sessions/session-transcript-worker-resources.js"),
+    import("../config/sessions/session-history-worker-idle.js"),
     import("../state/openclaw-agent-db.paths.js"),
     import("../state/openclaw-agent-db-lifecycle.js"),
     import("../state/openclaw-agent-db-readers.js"),
@@ -255,7 +327,7 @@ async function closeDepartedAgentResources(
   const openPaths = [...agentDatabaseLifecycle.databases.values()]
     .filter((database) => database.agentId === normalized && database.db.isOpen)
     .map((database) => database.path);
-  await retireSessionHistoryWorkerDatabases({
+  await releaseSessionHistoryWorkerDatabases({
     agentId: normalized,
     paths: [
       canonical,
@@ -298,7 +370,11 @@ async function closeDepartedAgentResources(
     }
     return;
   }
-  // Same close as Gateway shutdown: stop WAL maintenance, then TRUNCATE on the last handle.
+  // Shutdown closes peer workers before this handle. A worker-maintained close()
+  // skips TRUNCATE, so checkpoint here once those peers are gone.
+  for (const pathname of readerPaths) {
+    await checkpointOpenDepartedDatabase(pathname, normalized);
+  }
   for (const pathname of readerPaths) {
     await closeOpenClawAgentDatabaseByPathAsync(pathname, normalized);
   }
@@ -321,6 +397,9 @@ async function closeDepartedAgentResources(
   });
   if (planningError) {
     throw planningError;
+  }
+  for (const pathname of readerPaths) {
+    await finishDepartedWalCheckpoint(pathname, normalized);
   }
 }
 

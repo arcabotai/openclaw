@@ -486,6 +486,8 @@ it("lets a held embedded turn finish before closing its database", async () => {
   await waitForDepartedAgentDatabaseRelease("worker");
   expect(worker.database.db.isOpen).toBe(false);
   expect(fs.existsSync(worker.path)).toBe(true);
+  expect(fs.existsSync(`${worker.path}-wal`)).toBe(false);
+  expect(fs.existsSync(`${worker.path}-shm`)).toBe(false);
   const persisted = readClosedAgentDatabase(worker.path);
   expect(persisted.sessionKey).toBe("agent:worker:main");
   expect(persisted.transcript).toContain("STUB_OK");

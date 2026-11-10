@@ -22,6 +22,10 @@ import {
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import {
+  retainSessionHistoryWorkerDatabase,
+  withSessionHistoryWorkerDatabase,
+} from "../config/sessions/session-transcript-worker-runtime.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isDeletedAgentDatabasePath } from "../infra/agent-database-readers.js";
 import { retainSqliteDatabaseAdmissionLocation } from "../infra/sqlite-database-admission.js";
@@ -122,6 +126,38 @@ async function commitRoster(
 
 function holderIds(): string[] {
   return listOpenClawAgentDatabasesForTest().map((database) => database.agentId);
+}
+
+function readHistoryPresence(pathname: string) {
+  return withSessionHistoryWorkerDatabase(
+    { agentId: "worker", path: pathname, env: process.env },
+    (owner) =>
+      owner.readEntryPresence({
+        agentId: "worker",
+        sessionKey: "agent:worker:main",
+        storePath: pathname,
+        databaseAgentId: "worker",
+        env: process.env,
+      }),
+  );
+}
+
+/** Real timer. Fake scheduler clocks must not decide whether reload is stuck. */
+function finishedWithin(work: Promise<unknown>, budgetMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), budgetMs);
+    timer.unref();
+    work.then(
+      () => {
+        clearTimeout(timer);
+        resolve(true);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
 }
 
 function readClosedAgentDatabase(pathname: string): {
@@ -492,6 +528,45 @@ it("lets a held embedded turn finish before closing its database", async () => {
   expect(persisted.sessionKey).toBe("agent:worker:main");
   expect(persisted.transcript).toContain("STUB_OK");
   expect(persisted.transcript).toContain('"stopReason":"stop"');
+});
+
+it("closes an idle agent promptly after its history worker has served a read", async () => {
+  const { opened } = installState(["main", "worker"]);
+  const worker = opened.find((database) => database.agentId === "worker");
+  if (!worker) {
+    throw new Error("fixture did not open worker");
+  }
+  await readHistoryPresence(worker.path);
+  const removed = commitRoster(createHandlers(), roster(["main"]));
+  await expect(finishedWithin(removed, 8_000)).resolves.toBe(true);
+  expect(worker.database.db.isOpen).toBe(false);
+  expect(fs.existsSync(worker.path)).toBe(true);
+  expect(fs.existsSync(`${worker.path}-wal`)).toBe(false);
+  expect(fs.existsSync(`${worker.path}-shm`)).toBe(false);
+});
+
+it("does not block reload when a history read has no completion promise", async () => {
+  const { opened } = installState(["main", "worker"]);
+  const worker = opened.find((database) => database.agentId === "worker");
+  if (!worker) {
+    throw new Error("fixture did not open worker");
+  }
+  const retained = retainSessionHistoryWorkerDatabase({
+    agentId: "worker",
+    path: worker.path,
+    env: process.env,
+  });
+  onTestFinished(() => retained.release());
+  await retained.owner.readEntryPresence({
+    agentId: "worker",
+    sessionKey: "agent:worker:main",
+    storePath: worker.path,
+    databaseAgentId: "worker",
+    env: process.env,
+  });
+  const removed = commitRoster(createHandlers(), roster(["main"]));
+  await expect(finishedWithin(removed, 8_000)).resolves.toBe(true);
+  expect(worker.database.db.isOpen).toBe(true);
 });
 
 it("clears the session-write block when cleanup fails and the agent is re-added", async () => {

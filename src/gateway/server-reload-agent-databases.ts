@@ -186,14 +186,9 @@ function departedDatabasePaths(
 }
 
 /** Session-row, transcript, and history-worker writes can still be queued after the turn ends. */
-async function awaitDepartedDurableWrites(
-  agentId: string,
-  databasePaths: ReadonlySet<string>,
-): Promise<void> {
-  const [{ drainOpenClawAgentWriteQueues }, { awaitSessionHistoryWorkerIdle }] = await Promise.all([
-    import("../state/openclaw-agent-write-admission.js"),
-    import("../config/sessions/session-history-worker-idle.js"),
-  ]);
+async function awaitDepartedDurableWrites(databasePaths: ReadonlySet<string>): Promise<void> {
+  const { drainOpenClawAgentWriteQueues } =
+    await import("../state/openclaw-agent-write-admission.js");
   const ownsPath = (storePath: string) => {
     const resolved = path.resolve(storePath);
     if (databasePaths.has(resolved)) {
@@ -205,8 +200,6 @@ async function awaitDepartedDurableWrites(
       return false;
     }
   };
-  await drainOpenClawAgentWriteQueues(ownsPath);
-  await awaitSessionHistoryWorkerIdle({ agentId, paths: [...databasePaths] });
   await drainOpenClawAgentWriteQueues(ownsPath);
 }
 
@@ -244,14 +237,14 @@ async function closeDepartedAgentResources(
     path: path.join(agentDir, "openclaw-agent.sqlite"),
   });
   const durablePaths = departedDatabasePaths(normalized, canonical, paths);
-  await awaitDepartedDurableWrites(normalized, durablePaths);
+  await awaitDepartedDurableWrites(durablePaths);
   if (liveAgentIds()?.has(normalized)) {
     return;
   }
   const openPaths = [...agentDatabaseLifecycle.databases.values()]
     .filter((database) => database.agentId === normalized && database.db.isOpen)
     .map((database) => database.path);
-  await releaseSessionHistoryWorkerDatabases({
+  const historyClosed = await releaseSessionHistoryWorkerDatabases({
     agentId: normalized,
     paths: [
       canonical,
@@ -259,6 +252,9 @@ async function closeDepartedAgentResources(
       paths.resolveIncognitoOpenClawAgentSqlitePath({ agentId: normalized }),
     ],
   });
+  if (!historyClosed) {
+    return;
+  }
   await closeActiveMemorySearchManagerCore({ cfg: previousConfig, agentId: normalized });
 
   let readerPaths = [
@@ -463,9 +459,7 @@ function deferDepartedAgentRelease(
 async function awaitDepartedTerminalPersistence(agentId: string): Promise<void> {
   const { getRpcSourceIdentity, listRpcSourceEntries } =
     await import("../sessions/session-controller.rpc-sources.js");
-  const seen = new WeakSet<Promise<unknown>>();
-  let stalled = false;
-  for (;;) {
+  const current = () => {
     const work: Promise<unknown>[] = [];
     let awaitingOwner = false;
     for (const [, source] of listRpcSourceEntries()) {
@@ -484,22 +478,21 @@ async function awaitDepartedTerminalPersistence(agentId: string): Promise<void> 
         work.push(pending);
       }
     }
-    const fresh = work.filter((pending) => !seen.has(pending));
-    for (const pending of fresh) {
-      seen.add(pending);
+    return { work, awaitingOwner };
+  };
+  let { work, awaitingOwner } = current();
+  if (work.length === 0 && awaitingOwner) {
+    await Promise.resolve();
+    ({ work, awaitingOwner } = current());
+    if (work.length === 0 && awaitingOwner) {
+      throw new Error(`Agent ${agentId} terminal session persistence did not start.`);
     }
-    if (!fresh.length && !awaitingOwner) {
-      return;
+  }
+  if (work.length > 0) {
+    await Promise.allSettled(work);
+    const followUp = current().work;
+    if (followUp.length > 0) {
+      await Promise.allSettled(followUp);
     }
-    if (!fresh.length) {
-      if (stalled) {
-        throw new Error(`Agent ${agentId} terminal session persistence did not start.`);
-      }
-      stalled = true;
-      await Promise.resolve();
-      continue;
-    }
-    stalled = false;
-    await Promise.allSettled(fresh);
   }
 }

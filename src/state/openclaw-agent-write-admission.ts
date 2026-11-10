@@ -409,18 +409,23 @@ export async function runOpenClawAgentWriteAdmissions<T>(
   );
 }
 
-/** Joins accepted writes without cancelling queued followers. Stop their producers first. */
+function queuedAgentWrites(ownsPath: (storePath: string) => boolean): Promise<void>[] {
+  return [...admission.queues].flatMap(([storePath, queue]) =>
+    ownsPath(storePath) && queue.drainPromise ? [queue.drainPromise] : [],
+  );
+}
+
+/** Joins accepted writes without cancelling queued followers. At most one follow-up generation. */
 export async function drainOpenClawAgentWriteQueues(
   ownsPath: (storePath: string) => boolean = () => true,
 ): Promise<void> {
-  while (true) {
-    const drains = [...admission.queues].flatMap(([storePath, queue]) =>
-      ownsPath(storePath) && queue.drainPromise ? [queue.drainPromise] : [],
-    );
-    if (drains.length === 0) {
-      return;
-    }
-    await Promise.all(drains);
-    // A settling writer can enqueue another store or a fresh drain generation.
+  const first = queuedAgentWrites(ownsPath);
+  if (first.length === 0) {
+    return;
+  }
+  await Promise.all(first);
+  const followUp = queuedAgentWrites(ownsPath);
+  if (followUp.length > 0) {
+    await Promise.all(followUp);
   }
 }

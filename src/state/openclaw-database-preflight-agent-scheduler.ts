@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import {
   isSqliteInspectionDeadlineOwnedByCaller,
@@ -16,6 +17,18 @@ import type {
 // Slow disks keep their full inspection budget without holding the Gateway listener.
 const AGENT_DATABASE_STARTUP_WAIT_MS = 5_000;
 
+/** First real path and agent id wins. A missing path stays on the normal inspection path. */
+export function openClawDatabasePreflightClaimKey(target: {
+  path: string;
+  agentId?: string;
+}): string | undefined {
+  try {
+    return `${realpathSync.native(target.path)}\0${target.agentId ?? ""}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function preflightAgentDatabasesBounded<T>(
   targets: readonly T[],
   inspect: (
@@ -31,6 +44,8 @@ export async function preflightAgentDatabasesBounded<T>(
     canDefer: (target: T) => boolean;
     /** Clean-closed stores admit in-process; unsealed ones need a cold reader process. */
     cleanClose?: (target: T) => boolean;
+    /** Real path plus agent id. The first copy keeps its list position. */
+    claimKey?: (target: T) => string | undefined;
     track: (work: Promise<unknown>) => void;
     defer: (
       inspections: { target: T; result: Promise<OpenClawDatabaseSchemaPreflight> }[],
@@ -54,15 +69,6 @@ export async function preflightAgentDatabasesBounded<T>(
     return true;
   };
 
-  // Inspect cheap clean-closed stores first so slow unsealed stores at the head of the list
-  // cannot hold both slots past the startup wait and defer the whole fleet. The partition is
-  // stable, so targets sharing a path keep their claim order and results keep list order.
-  const sealed = startup?.cleanClose;
-  const inspectionOrder = targets.map((_, index) => index);
-  if (sealed) {
-    const isSealed = targets.map((target) => sealed(target));
-    inspectionOrder.sort((left, right) => Number(isSealed[right]) - Number(isSealed[left]));
-  }
   const inspections: Array<OpenClawDatabaseSchemaPreflight | undefined> = [];
   const failures = new Map<number, unknown>();
   let nextInspectionIndex = 0;
@@ -73,6 +79,42 @@ export async function preflightAgentDatabasesBounded<T>(
     void completion.promise.catch(() => {});
   }
   const deferred = new Set<number>();
+  // Later copies share the first copy's claim. They keep an empty result in list order,
+  // the same outcome as a failed claim, so the startup timer cannot defer them on their own.
+  let inspectionOrder = targets.map((_, index) => index);
+  const claimKey = startup?.claimKey;
+  if (claimKey) {
+    const firstByKey = new Map<string, number>();
+    const duplicates = new Set<number>();
+    for (const index of inspectionOrder) {
+      const key = claimKey(targets[index]!);
+      if (!key) {
+        continue;
+      }
+      const first = firstByKey.get(key);
+      if (first === undefined) {
+        firstByKey.set(key, index);
+      } else {
+        duplicates.add(index);
+      }
+    }
+    for (const index of duplicates) {
+      const inspection: OpenClawDatabaseSchemaPreflight = { incompatible: [], indeterminate: [] };
+      inspections[index] = inspection;
+      completions[index]!.resolve(inspection);
+    }
+    if (duplicates.size > 0) {
+      inspectionOrder = inspectionOrder.filter((index) => !duplicates.has(index));
+    }
+  }
+  // Inspect cheap clean-closed stores first so slow unsealed stores at the head of the list
+  // cannot hold both slots past the startup wait and defer the whole fleet. The partition is
+  // stable, so targets sharing a path keep their claim order and results keep list order.
+  const sealed = startup?.cleanClose;
+  if (sealed) {
+    const isSealed = targets.map((target) => sealed(target));
+    inspectionOrder.sort((left, right) => Number(isSealed[right]) - Number(isSealed[left]));
+  }
   const concurrency = Math.min(
     AGENT_DATABASE_PREFLIGHT_CONCURRENCY,
     availableParallelism(),

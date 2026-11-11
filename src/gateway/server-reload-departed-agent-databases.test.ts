@@ -395,8 +395,8 @@ it("lets a held embedded turn finish before closing its database", async () => {
     storePath: worker.path,
   };
   await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
-  const held = createDeferred<void>();
-  const releaseHold = createDeferred<void>();
+  const held = createDeferred();
+  const releaseHold = createDeferred();
   const streamAbort = new AbortController();
   const sessionId = "worker-held-model";
   const handle = createEmbeddedRunHandle({
@@ -472,7 +472,7 @@ it("lets a held embedded turn finish before closing its database", async () => {
   });
   onTestFinished(() => {
     void session.abort().catch(() => undefined);
-    void session.dispose();
+    session.dispose();
   });
   const records: Array<{ text: string; stopReason: string; open: boolean }> = [];
   let turnAborted = false;

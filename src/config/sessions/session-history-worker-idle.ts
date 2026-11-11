@@ -1,31 +1,20 @@
 import path from "node:path";
 import { getSqliteRuntimeCapabilities } from "../../infra/bun-sqlite-library.js";
+import { closeTaskPoolSqliteResources } from "../../infra/worker-task-pool.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { historyDatabases } from "./session-transcript-worker-resources.js";
 
 /** Reload must not wait longer than a normal config apply. */
 const HISTORY_RELEASE_BUDGET_MS = 1_000;
 
-type NativeClosePool = {
-  closeResources: (key?: string) => Promise<void>;
-  canCloseNativeResources?: () => boolean;
-};
-
-function nativeClosePool(pool: { rotate: () => Promise<void> }): NativeClosePool | undefined {
-  if (!("closeResources" in pool) || typeof pool.closeResources !== "function") {
-    return undefined;
-  }
-  return pool as NativeClosePool;
-}
-
-/**
- * The pool latches false when its first worker started before close qualification
- * (`session-transcript-read-pools.ts` keeps that false until rotation). Once this
- * process is allowed to close native handles, `closeResources` is a real sqlite
- * close for the lanes still attached.
- */
-function poolAllowsNativeClose(pool: NativeClosePool): boolean {
-  if (pool.canCloseNativeResources?.() !== false) {
+function laneAllowsNativeClose(pool: object): boolean {
+  // History pools latch false until rotation. WorkerTaskPool has no latch.
+  // Once this process may close native handles, both are a real sqlite close.
+  if (
+    "canCloseNativeResources" in pool &&
+    typeof pool.canCloseNativeResources === "function" &&
+    pool.canCloseNativeResources() !== false
+  ) {
     return true;
   }
   return getSqliteRuntimeCapabilities().explicitSqliteCloseReleasesNativeResources;
@@ -81,30 +70,31 @@ export async function releaseSessionHistoryWorkerDatabases(options: {
   ) {
     return false;
   }
-  // A retained read has no completion promise. Polling its counter blocks reload.
+  // A retained read with no host effect has no completion promise.
   if (selected.some((resource) => resource.pending > 0 || resource.hostEffects.size > 0)) {
     return false;
   }
   for (const resource of selected) {
     for (const lane of Array.from(resource.nativeLanes)) {
-      const pool = nativeClosePool(lane.pool);
-      if (!pool || !poolAllowsNativeClose(pool)) {
+      if (!laneAllowsNativeClose(lane.pool)) {
+        return false;
+      }
+      const closing = closeTaskPoolSqliteResources(
+        lane.pool,
+        JSON.stringify([{ path: resource.database.path }]),
+      );
+      if (!closing) {
         return false;
       }
       resource.nativeLanes.delete(lane);
-      const closed = await settleWithin(
-        pool.closeResources(JSON.stringify([{ path: resource.database.path }])),
-        deadline - performance.now(),
-      );
-      if (!closed) {
+      if (!(await settleWithin(closing, deadline - performance.now()))) {
         return false;
       }
     }
-    if (resource.nativeLanes.size !== 0) {
-      return false;
-    }
-    const retired = await settleWithin(resource.retire(), deadline - performance.now());
-    if (!retired) {
+    if (
+      resource.nativeLanes.size !== 0 ||
+      !(await settleWithin(resource.retire(), deadline - performance.now()))
+    ) {
       return false;
     }
   }

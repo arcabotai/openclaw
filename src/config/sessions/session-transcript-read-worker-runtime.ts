@@ -10,7 +10,7 @@ import {
   resolveWorkerPoolSize,
   SESSION_TRANSCRIPT_FOREGROUND_WORKERS,
 } from "../../infra/worker-pool-sizing.js";
-import { createOwnedWorkerTaskPool } from "../../infra/worker-task-pool.js";
+import { WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import type { WorkerTaskOptions } from "../../infra/worker-task-pool.types.js";
 import type { readSessionTranscriptModelContext } from "./session-accessor.sqlite-model-context.js";
 import type { SessionTranscriptRuntimeTarget } from "./session-accessor.types.js";
@@ -51,7 +51,7 @@ export function createSessionTranscriptReadPool<Input extends SessionTranscriptW
   const lane = registerSessionTranscriptReaderLane(
     "Session transcript read",
     (onRotationComplete) =>
-      createOwnedWorkerTaskPool<Input, SessionTranscriptWorkerReply<Input["kind"]>>({
+      new WorkerTaskPool<Input, SessionTranscriptWorkerReply<Input["kind"]>>({
         workerUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTranscript),
         prepareWorker: () => {
           // Bun loads one SQLite library per process; workers inherit the parent's selection.
